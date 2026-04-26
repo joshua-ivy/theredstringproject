@@ -7,7 +7,7 @@ service firebase.storage {
     }
 
     function admin() {
-      return signedIn() && request.auth.token.admin == true;
+      return signedIn() && request.auth.token.email == "jivy26@gmail.com";
     }
 
     match /archives/{allPaths=**} {

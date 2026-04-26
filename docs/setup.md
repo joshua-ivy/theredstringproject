@@ -38,27 +38,23 @@ Set string params with a local Functions env file before deploy:
 
 ```bash
 cat > functions/.env.the-red-string-project <<'EOF'
-ADMIN_EMAILS=you@example.com
+ADMIN_EMAILS=jivy26@gmail.com
 GOOGLE_PSE_CX=your-programmable-search-engine-id
 DEFAULT_SEARCH_QUERIES=site:.gov declassified intelligence documents,uap testimony documents
 EOF
 ```
 
-`NEXT_PUBLIC_ADMIN_EMAILS` is only a client hint. The server-side `ADMIN_EMAILS` parameter is the real
-write gate for callable Functions.
+`NEXT_PUBLIC_ADMIN_EMAILS` is only a client hint. The server-side `ADMIN_EMAILS` parameter and Firebase
+rules are the real write gates. By default, admin access is limited to `jivy26@gmail.com`.
 
-## Admin Custom Claims
+## Google Sign-In
 
-Firestore and Storage rules use `request.auth.token.admin == true` for direct client writes. Callable
-Functions also allow emails listed in `ADMIN_EMAILS`.
+Google sign-in is configured in Firebase Authentication. The OAuth client secret belongs in the
+Google/Firebase provider settings only; do not place it in this repo, `apphosting.yaml`, or any
+`NEXT_PUBLIC_` variable.
 
-For Storage uploads from the browser, set the custom claim once with the Admin SDK:
-
-```js
-await getAuth().setCustomUserClaims(uid, { admin: true });
-```
-
-After changing claims, sign out and sign in again so the ID token refreshes.
+Firestore and Storage rules allow admin writes only when the signed-in user's email is
+`jivy26@gmail.com`.
 
 ## Firebase Emulators
 

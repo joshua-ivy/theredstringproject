@@ -22,7 +22,7 @@ const bucket = getStorage().bucket();
 const GEMINI_API_KEY = defineSecret("GOOGLE_GENAI_API_KEY");
 const GOOGLE_PSE_API_KEY = defineSecret("GOOGLE_PSE_API_KEY");
 const GOOGLE_PSE_CX = defineString("GOOGLE_PSE_CX", { default: "" });
-const ADMIN_EMAILS = defineString("ADMIN_EMAILS", { default: "" });
+const ADMIN_EMAILS = defineString("ADMIN_EMAILS", { default: "jivy26@gmail.com" });
 const DEFAULT_SEARCH_QUERIES = defineString("DEFAULT_SEARCH_QUERIES", {
   default: "site:.gov declassified archive intelligence documents,uap public testimony documents"
 });
@@ -54,7 +54,7 @@ function requireAdmin(request: { auth?: { token?: { email?: string; admin?: bool
     throw new HttpsError("unauthenticated", "Sign in before using this function.");
   }
 
-  if (request.auth.token?.admin === true || allowlist.includes(email)) {
+  if (allowlist.includes(email)) {
     return email;
   }
 

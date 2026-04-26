@@ -1,8 +1,12 @@
+const defaultAdminEmails = ["jivy26@gmail.com"];
+
 export function configuredAdminEmails() {
-  return (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
+  const configured = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
     .split(",")
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
+
+  return configured.length > 0 ? configured : defaultAdminEmails;
 }
 
 export function isAdminEmail(email?: string | null) {
@@ -11,5 +15,5 @@ export function isAdminEmail(email?: string | null) {
     return false;
   }
 
-  return admins.length === 0 || admins.includes(email.toLowerCase());
+  return admins.includes(email.toLowerCase());
 }
