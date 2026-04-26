@@ -34,6 +34,12 @@ function ScoreRow({ label, value, inverse = false }: { label: string; value: num
   );
 }
 
+function formatRetrieved(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
   const primaryAsset = evidence?.archived_assets.find((asset) => asset.url) ?? evidence?.archived_assets[0] ?? null;
   const hashPreview = evidence?.content_hash ? `${evidence.content_hash.slice(0, 12)}...` : "none";
@@ -121,7 +127,7 @@ export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
           <div className="archive-list">
             <h3>Preservation</h3>
             <span>Archive: {evidence.archive_status.replace(/_/g, " ")}</span>
-            <span>Retrieved: {new Date(evidence.retrieved_at).toLocaleString()}</span>
+            <span>Retrieved: {formatRetrieved(evidence.retrieved_at)}</span>
             <span title={evidence.content_hash}>Hash: {hashPreview}</span>
             {evidence.archived_assets.length > 0 ? (
               evidence.archived_assets.map((asset) => (

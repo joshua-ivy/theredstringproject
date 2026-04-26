@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Archive, Bot, Check, Folder, Search, Shield, GitBranch } from "lucide-react";
+import { HowItWorksLink } from "@/components/HowItWorksLink";
 
 const tabs = [
   { href: "/app", label: "The Web", icon: GitBranch },
@@ -121,7 +122,7 @@ export default function Home() {
 
           <div className="guide-landing-actions">
             <Link className="primary-link" href="/app">Open the board -&gt;</Link>
-            <a className="secondary-link" href="#how-it-works">How it works</a>
+            <HowItWorksLink />
           </div>
         </div>
 

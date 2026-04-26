@@ -207,6 +207,23 @@ async function enqueueAnalysis(evidenceId: string) {
   await queue.enqueue({ evidenceId }, { dispatchDeadlineSeconds: 540 });
 }
 
+async function queueAnalysisBestEffort(evidenceId: string) {
+  try {
+    await enqueueAnalysis(evidenceId);
+  } catch (error) {
+    logger.error("Analysis enqueue failed", { evidenceId, error });
+    await db.collection("analysis_jobs").doc(evidenceId).set(
+      {
+        evidence_id: evidenceId,
+        status: "enqueue_failed",
+        error: error instanceof Error ? error.message : String(error),
+        updated_at: FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+  }
+}
+
 async function createEvidenceFromUrl(input: {
   url: string;
   notes?: string;
@@ -319,8 +336,8 @@ async function createEvidenceFromUrl(input: {
     updated_at: FieldValue.serverTimestamp(),
     analysis_status: "queued",
     review_status: input.discoverySource ? "pending_review" : "approved",
-    discovery_source: input.discoverySource,
-    notes: input.notes
+    ...(input.discoverySource ? { discovery_source: input.discoverySource } : {}),
+    ...(input.notes ? { notes: input.notes } : {})
   };
 
   await db.collection("evidences").doc(evidenceId).set(record);
@@ -330,7 +347,7 @@ async function createEvidenceFromUrl(input: {
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp()
   });
-  await enqueueAnalysis(evidenceId);
+  await queueAnalysisBestEffort(evidenceId);
   return { evidenceId, status: "queued" };
 }
 
@@ -504,14 +521,21 @@ async function upsertCase(label: string, evidenceId: string, analysis: AnalysisR
 
 export const submitEvidenceUrl = onCall({ region: "us-central1" }, async (request) => {
   requireAdmin(request);
-  const input = submitUrlSchema.parse(request.data);
-  return createEvidenceFromUrl(input);
+  const input = submitUrlSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence URL submission is invalid.", input.error.flatten());
+  }
+  return createEvidenceFromUrl(input.data);
 });
 
 export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (request) => {
   requireAdmin(request);
-  const input = submitUploadSchema.parse(request.data);
-  const file = bucket.file(input.storagePath);
+  const input = submitUploadSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence upload submission is invalid.", input.error.flatten());
+  }
+  const uploadInput = input.data;
+  const file = bucket.file(uploadInput.storagePath);
   const [exists] = await file.exists();
   if (!exists) {
     throw new HttpsError("not-found", "Uploaded file was not found in Cloud Storage.");
@@ -519,14 +543,14 @@ export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (req
 
   const [metadata] = await file.getMetadata();
   const [bytes] = await file.download();
-  const evidenceId = `ev-${sha256(`${input.storagePath}:${sha256(bytes)}`).slice(0, 18)}`;
+  const evidenceId = `ev-${sha256(`${uploadInput.storagePath}:${sha256(bytes)}`).slice(0, 18)}`;
   const archivePath = `archives/${evidenceId}/source-${metadata.name?.split("/").pop() ?? "upload"}`;
   await bucket.file(archivePath).save(bytes, {
     contentType: metadata.contentType ?? "application/octet-stream",
     metadata: { cacheControl: "private, max-age=31536000" }
   });
 
-  const sourceUrl = input.sourceUrl ?? `storage://${archivePath}`;
+  const sourceUrl = uploadInput.sourceUrl ?? `storage://${archivePath}`;
   const type = evidenceTypeFromContent(metadata.contentType ?? "", archivePath);
   let contentText = `Uploaded ${type} evidence preserved at ${archivePath}.`;
   const archivedAssets: ArchivedAsset[] = [
@@ -570,7 +594,7 @@ export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (req
     credibility_breakdown: {},
     manipulation_flags: [],
     entities: [],
-    tags: input.tags ?? [],
+    tags: uploadInput.tags ?? [],
     archive_status: "archived",
     archived_assets: archivedAssets,
     content_hash: sha256(bytes),
@@ -580,21 +604,31 @@ export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (req
     updated_at: FieldValue.serverTimestamp(),
     analysis_status: "queued",
     review_status: "approved",
-    notes: input.notes
+    ...(uploadInput.notes ? { notes: uploadInput.notes } : {})
   };
 
   await db.collection("evidences").doc(evidenceId).set(record);
-  await enqueueAnalysis(evidenceId);
+  await db.collection("analysis_jobs").doc(evidenceId).set({
+    evidence_id: evidenceId,
+    status: "queued",
+    created_at: FieldValue.serverTimestamp(),
+    updated_at: FieldValue.serverTimestamp()
+  });
+  await queueAnalysisBestEffort(evidenceId);
   return { evidenceId, status: "queued" };
 });
 
 export const setEvidenceReviewStatus = onCall({ region: "us-central1" }, async (request) => {
   const reviewerEmail = requireAdmin(request);
-  const input = reviewSchema.parse(request.data);
-  await db.collection("evidences").doc(input.evidenceId).set(
+  const input = reviewSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Review update is invalid.", input.error.flatten());
+  }
+  const reviewInput = input.data;
+  await db.collection("evidences").doc(reviewInput.evidenceId).set(
     {
-      review_status: input.reviewStatus,
-      review_note: input.note ?? null,
+      review_status: reviewInput.reviewStatus,
+      review_note: reviewInput.note ?? null,
       reviewed_by: reviewerEmail,
       reviewed_at: FieldValue.serverTimestamp(),
       updated_at: FieldValue.serverTimestamp()
@@ -603,8 +637,8 @@ export const setEvidenceReviewStatus = onCall({ region: "us-central1" }, async (
   );
 
   return {
-    evidenceId: input.evidenceId,
-    reviewStatus: input.reviewStatus
+    evidenceId: reviewInput.evidenceId,
+    reviewStatus: reviewInput.reviewStatus
   };
 });
 
@@ -802,10 +836,6 @@ export const oracleAsk = onCall(
     secrets: [GEMINI_API_KEY]
   },
   async (request) => {
-    if (!request.auth) {
-      throw new HttpsError("unauthenticated", "Sign in before asking the Oracle.");
-    }
-
     const question = String(request.data?.question ?? "").trim();
     const credibilityMin = Math.max(0, Math.min(100, Number(request.data?.credibilityMin ?? 0)));
     if (!question) {

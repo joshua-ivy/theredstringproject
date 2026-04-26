@@ -1,6 +1,6 @@
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
-const now = new Date().toISOString();
+const now = "2026-04-26T20:18:00.000Z";
 
 export const sampleConspiracies: Conspiracy[] = [
   {
@@ -24,6 +24,16 @@ export const sampleConspiracies: Conspiracy[] = [
     last_weaved: now
   },
   {
+    id: "case-cointel",
+    title: "COINTELPRO Cross-Refs",
+    summary: "FBI counter-intelligence program records, surveillance directives, and contemporary parallels surfaced by archive cross-reference.",
+    credibility_avg: 71,
+    evidence_count: 4,
+    string_count: 7,
+    tags: ["fbi", "surveillance", "memos"],
+    last_weaved: now
+  },
+  {
     id: "case-election-media",
     title: "Election Media Claims",
     summary: "Claims about media amplification, voting-system narratives, and cross-platform influence campaigns.",
@@ -38,7 +48,7 @@ export const sampleConspiracies: Conspiracy[] = [
 export const sampleEvidence: Evidence[] = [
   {
     id: "evidence-church-hearings",
-    title: "Church Committee hearing reference",
+    title: "Church Committee resource index",
     type: "pdf",
     platform: "archive",
     source_url: "https://www.intelligence.senate.gov/resources",
@@ -65,8 +75,8 @@ export const sampleEvidence: Evidence[] = [
     source_url: "local://sample/declassified-memo",
     canonical_url: "local://sample/declassified-memo",
     content_text: "A scanned memo excerpt allegedly tied to behavioral research procurement.",
-    credibility_score: 72,
-    credibility_explanation: "Document-like artifact with plausible context, but image provenance and completeness need verification.",
+    credibility_score: 52,
+    credibility_explanation: "Partial scan with uncertain provenance. Needs corroboration against a complete archived source before publication.",
     entities: ["MKSEARCH", "CIA", "procurement"],
     tags: ["scan", "mkultra"],
     archive_status: "archived",
@@ -76,7 +86,7 @@ export const sampleEvidence: Evidence[] = [
     retrieved_at: now,
     created_at: now,
     analysis_status: "complete",
-    review_status: "approved"
+    review_status: "pending_review"
   },
   {
     id: "evidence-national-archives",
@@ -226,6 +236,24 @@ export const sampleConnections: Connection[] = [
     type: "correlates",
     weight: 0.58,
     ai_reason: "Shared defense-program language creates a moderate semantic connection.",
+    created_at: now
+  },
+  {
+    id: "conn-08",
+    from: "evidence-national-archives",
+    to: "case-cointel",
+    type: "correlates",
+    weight: 0.52,
+    ai_reason: "Archive records and oversight references overlap with surveillance-program source trails.",
+    created_at: now
+  },
+  {
+    id: "conn-09",
+    from: "evidence-rss-news",
+    to: "case-cointel",
+    type: "correlates",
+    weight: 0.46,
+    ai_reason: "Named filings and public records intersect with counter-intelligence case entities.",
     created_at: now
   }
 ];

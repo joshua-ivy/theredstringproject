@@ -27,6 +27,8 @@ import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 type ViewKey = "web" | "case-files" | "evidence-locker" | "oracle" | "review";
 
+const fallbackIso = "2026-04-26T20:18:00.000Z";
+
 const views: Array<{ key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { key: "web", label: "The Web", icon: Network },
   { key: "case-files", label: "Case Files", icon: FolderKanban },
@@ -35,9 +37,41 @@ const views: Array<{ key: ViewKey; label: string; icon: React.ComponentType<{ si
   { key: "review", label: "Review", icon: ClipboardCheck }
 ];
 
+function viewFromHash(hash: string): ViewKey | null {
+  const normalized = hash.replace(/^#/, "");
+  return views.some((view) => view.key === normalized) ? (normalized as ViewKey) : null;
+}
+
+function setViewHash(view: ViewKey) {
+  if (typeof window === "undefined") return;
+  const nextHash = `#${view}`;
+  if (window.location.hash !== nextHash) {
+    window.history.replaceState(null, "", nextHash);
+  }
+}
+
+function mergeWithSamples<T extends { id: string }>(
+  samples: T[],
+  live: T[],
+  keyForItem?: (item: T) => Array<string | undefined>
+) {
+  const seen = new Set<string>();
+  const mark = (item: T) => {
+    seen.add(`id:${item.id}`);
+    keyForItem?.(item).filter(Boolean).forEach((key) => seen.add(`key:${key}`));
+  };
+  const isSeen = (item: T) =>
+    seen.has(`id:${item.id}`) || Boolean(keyForItem?.(item).filter(Boolean).some((key) => seen.has(`key:${key}`)));
+
+  samples.forEach(mark);
+  const additions = live.filter((item) => !isSeen(item));
+  additions.forEach(mark);
+  return [...samples, ...additions];
+}
+
 function iso(value: unknown) {
   if (!value) {
-    return new Date().toISOString();
+    return fallbackIso;
   }
 
   if (typeof value === "string") {
@@ -94,6 +128,19 @@ function AuthenticatedApp({
   const [dataStatus, setDataStatus] = useState<"live" | "sample" | "error">("sample");
 
   useEffect(() => {
+    const syncFromHash = () => {
+      const hashedView = viewFromHash(window.location.hash);
+      if (hashedView) {
+        setActiveView(hashedView);
+      }
+    };
+
+    syncFromHash();
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, []);
+
+  useEffect(() => {
     const evidenceQuery = query(collection(db, "evidences"), orderBy("created_at", "desc"), limit(100));
     const conspiracyQuery = query(collection(db, "conspiracies"), orderBy("last_weaved", "desc"), limit(60));
     const connectionQuery = query(collection(db, "connections"), orderBy("created_at", "desc"), limit(250));
@@ -117,7 +164,12 @@ function AuthenticatedApp({
           } as Evidence;
         });
         if (docs.length > 0) {
-          setEvidences(docs);
+          setEvidences(
+            mergeWithSamples(sampleEvidence, docs, (evidence) => [
+              evidence.canonical_url,
+              evidence.source_url
+            ])
+          );
           setDataStatus("live");
           setSelectedEvidenceId((current) => current ?? docs[0]?.id ?? null);
         }
@@ -138,7 +190,7 @@ function AuthenticatedApp({
           } as Conspiracy;
         });
         if (docs.length > 0) {
-          setConspiracies(docs);
+          setConspiracies(mergeWithSamples(sampleConspiracies, docs));
         }
       },
       () => setDataStatus("error")
@@ -157,7 +209,13 @@ function AuthenticatedApp({
           } as Connection;
         });
         if (docs.length > 0) {
-          setConnections(docs);
+          setConnections(
+            docs.length > sampleConnections.length
+              ? mergeWithSamples(sampleConnections, docs, (connection) => [
+                  `${connection.from}:${connection.to}`
+                ])
+              : sampleConnections
+          );
         }
       },
       () => setDataStatus("error")
@@ -249,7 +307,10 @@ function AuthenticatedApp({
             <button
               key={view.key}
               className={activeView === view.key ? "active" : ""}
-              onClick={() => setActiveView(view.key)}
+              onClick={() => {
+                setActiveView(view.key);
+                setViewHash(view.key);
+              }}
             >
               <Icon size={16} />
               {view.label}
@@ -291,6 +352,11 @@ function AuthenticatedApp({
               cases
             </p>
           </div>
+          <div className="active-filter-stack">
+            <div className="label-tag">Active filters</div>
+            <span>approved only</span>
+            <span>all sources</span>
+          </div>
         </aside>
 
         <AnimatePresence mode="wait">
@@ -326,6 +392,7 @@ function AuthenticatedApp({
                   );
                   setSelectedEvidenceId(firstEvidence?.id ?? null);
                   setActiveView("web");
+                  setViewHash("web");
                 }}
               />
             ) : null}
@@ -337,6 +404,7 @@ function AuthenticatedApp({
                 onSelect={(id) => {
                   setSelectedEvidenceId(id);
                   setActiveView("web");
+                  setViewHash("web");
                 }}
               />
             ) : null}

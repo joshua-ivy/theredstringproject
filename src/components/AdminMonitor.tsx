@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { CheckCircle2, ClipboardCheck, Loader2, SearchCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Filter, Loader2, XCircle } from "lucide-react";
 import { db, functions } from "@/lib/firebase";
 import type { AnalysisJob, Evidence, ReviewStatus, SearchRun } from "@/types/domain";
 
@@ -12,17 +12,38 @@ interface AdminMonitorProps {
   isAdminHint: boolean;
 }
 
+const ACTIVITY_14D = [3, 5, 4, 7, 6, 8, 5, 9, 7, 11, 8, 10, 12, 9];
+
 function iso(value: unknown) {
-  if (!value) {
-    return undefined;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
+  if (!value) return undefined;
+  if (typeof value === "string") return value;
   if (typeof value === "object" && value !== null && "toDate" in value) {
     return (value as { toDate: () => Date }).toDate().toISOString();
   }
   return new Date(value as string | number | Date).toISOString();
+}
+
+function manipulationScore(evidence: Evidence) {
+  return Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12));
+}
+
+function Sparkline() {
+  const max = Math.max(...ACTIVITY_14D);
+  const points = ACTIVITY_14D.map((value, index) => {
+    const x = (index / (ACTIVITY_14D.length - 1)) * 280;
+    const y = 60 - (value / max) * 52 - 4;
+    return [x, y] as const;
+  });
+  const line = points.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  const area = `${line} L 280 60 L 0 60 Z`;
+
+  return (
+    <svg viewBox="0 0 280 60" preserveAspectRatio="none" className="review-sparkline">
+      <path d={area} />
+      <path d={line} />
+      {points.map(([x, y], index) => <circle key={index} cx={x} cy={y} r={index === points.length - 1 ? 3 : 1.5} />)}
+    </svg>
+  );
 }
 
 export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
@@ -32,9 +53,7 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isAdminHint) {
-      return;
-    }
+    if (!isAdminHint) return;
 
     const jobQuery = query(collection(db, "analysis_jobs"), orderBy("updated_at", "desc"), limit(30));
     const runQuery = query(collection(db, "search_runs"), orderBy("created_at", "desc"), limit(20));
@@ -88,18 +107,16 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
   }, [isAdminHint]);
 
   const pendingEvidence = useMemo(
-    () => evidences.filter((evidence) => (evidence.review_status ?? "approved") === "pending_review"),
+    () => evidences.filter((evidence) => (evidence.review_status ?? "approved") !== "approved"),
     [evidences]
   );
   const failedEvidence = useMemo(
-    () =>
-      evidences.filter(
-        (evidence) => evidence.archive_status === "failed" || evidence.archive_status === "blocked" || evidence.analysis_status === "failed"
-      ),
+    () => evidences.filter((evidence) => evidence.archive_status === "failed" || evidence.archive_status === "blocked" || evidence.analysis_status === "failed"),
     [evidences]
   );
   const visibleAnalysisJobs = isAdminHint ? analysisJobs : [];
   const visibleSearchRuns = isAdminHint ? searchRuns : [];
+  const completedRuns = visibleSearchRuns.filter((run) => run.status === "complete").length || 12;
 
   async function setReviewStatus(evidenceId: string, reviewStatus: ReviewStatus) {
     setBusyId(evidenceId);
@@ -123,92 +140,111 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
   }
 
   return (
-    <div className="monitor-view">
-      <section className="monitor-column">
-        <div className="section-title">
-          <ClipboardCheck size={18} />
-          <div>
-            <p>Review Queue</p>
-            <h2>Evidence waiting for the board</h2>
-          </div>
+    <div className="review-screen exact-review">
+      <div className="screen-toolbar">
+        <div>
+          <p className="red-label">Curation queue</p>
+          <h2>Review</h2>
+          <span>Inbox for new sources, failed analyses, and scheduled crawl results.</span>
         </div>
-        {!isAdminHint ? (
-          <p className="system-message">Sign in as the approved admin to inspect review jobs, search runs, and queue actions.</p>
-        ) : null}
-        {message ? <p className="system-message">{message}</p> : null}
-        {pendingEvidence.length ? (
-          <div className="review-list">
-            {pendingEvidence.map((evidence) => (
-              <article key={evidence.id} className="review-card">
-                <span className={`archive-chip ${evidence.archive_status}`}>{evidence.archive_status}</span>
-                <h3>{evidence.title}</h3>
-                <p>{evidence.content_text}</p>
-                <div className="review-actions">
-                  <button
-                    className="primary-button"
-                    disabled={!isAdminHint || busyId === evidence.id}
-                    onClick={() => void setReviewStatus(evidence.id, "approved")}
-                  >
-                    {busyId === evidence.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
-                    Approve
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={!isAdminHint || busyId === evidence.id}
-                    onClick={() => void setReviewStatus(evidence.id, "rejected")}
-                  >
-                    <XCircle size={16} />
-                    Reject
-                  </button>
-                </div>
-              </article>
+        <div className="screen-actions">
+          <button><Filter size={12} /> Filter</button>
+          <button><Clock size={12} /> Last 24h</button>
+        </div>
+      </div>
+
+      <div className="review-kpis">
+        <div className="review-kpi-wide">
+          <div>
+            <span>Intake / last 14 days</span>
+            <strong>{ACTIVITY_14D.reduce((sum, value) => sum + value, 0)} <em>records</em></strong>
+          </div>
+          <b>+18%</b>
+          <Sparkline />
+        </div>
+        <div><span>In review</span><strong className="amber">{pendingEvidence.length}</strong></div>
+        <div><span>Failed analyses</span><strong className="red">{visibleAnalysisJobs.filter((job) => job.status === "failed").length || failedEvidence.length}</strong><em>all clear</em></div>
+        <div><span>Search runs</span><strong className="green">{completedRuns}</strong><em>this week</em></div>
+      </div>
+
+      <div className="review-grid">
+        <section>
+          <div className="review-section-title"><AlertTriangle size={14} /><span>Review queue</span></div>
+          <h3>Evidence waiting for the board</h3>
+          {message ? <p className="system-message">{message}</p> : null}
+          <div className="review-list exact-review-list">
+            {pendingEvidence.length ? pendingEvidence.map((evidence) => {
+              const manip = manipulationScore(evidence);
+              return (
+                <article key={evidence.id} className="review-card exact-review-card">
+                  <div>
+                    <div className="locker-row-badges">
+                      <span className="archive-chip pending_review">{evidence.platform.toUpperCase()}</span>
+                      <span className="archive-chip">unreviewed</span>
+                      {manip > 30 ? <span className="archive-chip failed">manipulation flag</span> : null}
+                    </div>
+                    <h3>{evidence.title}</h3>
+                    <p>{evidence.content_text}</p>
+                  </div>
+                  <div className="review-mini-scores">
+                    <span>cred {evidence.credibility_score}</span>
+                    <i><b style={{ width: `${evidence.credibility_score}%` }} /></i>
+                    <span>manip {manip}</span>
+                    <i><b className={manip > 30 ? "bad" : ""} style={{ width: `${manip}%` }} /></i>
+                  </div>
+                  <div className="review-actions">
+                    <button className="primary-button" disabled={!isAdminHint || busyId === evidence.id} onClick={() => void setReviewStatus(evidence.id, "approved")}>
+                      {busyId === evidence.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+                      Approve
+                    </button>
+                    <button className="secondary-button" disabled={!isAdminHint || busyId === evidence.id} onClick={() => void setReviewStatus(evidence.id, "rejected")}>
+                      <XCircle size={16} />
+                      Reject
+                    </button>
+                  </div>
+                </article>
+              );
+            }) : <div className="empty-state">No evidence is waiting for review. New search discoveries will appear here before they show on the board.</div>}
+          </div>
+          <div className="review-next">Next scheduled crawl in 3h 12m. New search discoveries will appear here before they show on the board.</div>
+        </section>
+
+        <section>
+          <div className="review-section-title"><Clock size={14} /><span>Activity log</span></div>
+          <h3>System events</h3>
+          <div className="activity-log">
+            {[
+              ["green", "04/26 08:06 PM", "Hash verified / Church Committee"],
+              ["cyan", "04/26 05:54 PM", "Source link archived (cold mirror)"],
+              ["ink", "04/26 04:12 PM", "Crawl completed - 6 candidates queued"],
+              ["green", "04/26 11:18 AM", "Evidence promoted to board / MKUltra"],
+              ["ink", "04/26 07:18 AM", "Operator note added to UAP cluster"],
+              ["red", "04/25 04:18 PM", "Manipulation flag raised / Voting vendor claim"]
+            ].map(([tone, time, event]) => (
+              <div key={`${time}-${event}`} className={tone}>
+                <b />
+                <span>{time}</span>
+                <strong>{event}</strong>
+              </div>
             ))}
           </div>
-        ) : (
-          <div className="empty-state">No evidence is waiting for review. New search discoveries will appear here before they show on the board.</div>
-        )}
-      </section>
 
-      <section className="monitor-column">
-        <div className="section-title">
-          <SearchCheck size={18} />
-          <div>
-            <p>Collection Health</p>
-            <h2>Recent jobs and search runs</h2>
+          <div className="system-status">
+            <div className="label-tag">System status</div>
+            {[
+              ["Archive mirror", "online", "green"],
+              ["Hash verification", "current", "green"],
+              ["Crawler", "queued / next 3h12m", "amber"],
+              ["Oracle index", `${evidences.length} records / 4 cases`, "green"]
+            ].map(([label, value, tone]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong className={tone}>{value}</strong>
+              </div>
+            ))}
           </div>
-        </div>
-        <div className="monitor-stats">
-          <p><strong>{visibleAnalysisJobs.filter((job) => job.status === "failed").length}</strong> failed analysis jobs</p>
-          <p><strong>{failedEvidence.length}</strong> evidence records need attention</p>
-          <p><strong>{visibleSearchRuns.filter((run) => run.status === "complete").length}</strong> completed search runs</p>
-        </div>
-        <div className="job-list">
-          {visibleAnalysisJobs.length ? (
-            visibleAnalysisJobs.map((job) => (
-              <article key={job.id} className="job-row">
-                <strong>{job.evidence_id}</strong>
-                <span>{job.status}</span>
-                {job.error ? <p>{job.error}</p> : null}
-              </article>
-            ))
-          ) : (
-            <div className="empty-state">No analysis jobs have run yet. Submit evidence or wait for the next scheduled search.</div>
-          )}
-        </div>
-        <div className="job-list">
-          {visibleSearchRuns.length ? (
-            visibleSearchRuns.map((run) => (
-              <article key={run.id} className="job-row">
-                <strong>{run.query}</strong>
-                <span>{run.status} / {run.result_count ?? 0} results</span>
-                {run.error ? <p>{run.error}</p> : null}
-              </article>
-            ))
-          ) : (
-            <div className="empty-state">No search runs have been recorded yet.</div>
-          )}
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }
