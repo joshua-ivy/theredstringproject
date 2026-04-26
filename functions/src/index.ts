@@ -471,6 +471,55 @@ async function findSimilarEvidence(evidenceId: string, embedding: number[]) {
   }
 }
 
+function oracleTerms(question: string) {
+  const terms = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !["show", "with", "and", "the", "for", "all", "cases", "case", "evidence", "connecting"].includes(term));
+  const expanded = new Set(terms);
+  if (expanded.has("uap") || expanded.has("ufo")) {
+    ["uap", "ufo", "unidentified", "anomalous", "craft", "aerospace"].forEach((term) => expanded.add(term));
+  }
+  if (expanded.has("mkultra") || expanded.has("mk")) {
+    ["mkultra", "cia", "mind-control", "documents"].forEach((term) => expanded.add(term));
+  }
+  return Array.from(expanded);
+}
+
+function scoreOracleDocument(data: FirebaseFirestore.DocumentData, terms: string[]) {
+  const text = [
+    data.title,
+    data.content_text,
+    data.platform,
+    data.type,
+    ...(Array.isArray(data.entities) ? data.entities : []),
+    ...(Array.isArray(data.tags) ? data.tags : [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
+}
+
+async function keywordEvidenceFallback(question: string, credibilityMin: number) {
+  const snapshot = await db.collection("evidences").where("credibility_score", ">=", credibilityMin).limit(60).get();
+  const terms = oracleTerms(question);
+  const ranked = snapshot.docs
+    .map((doc) => ({ doc, score: scoreOracleDocument(doc.data(), terms) }))
+    .sort((a, b) => b.score - a.score || Number(b.doc.data().credibility_score ?? 0) - Number(a.doc.data().credibility_score ?? 0));
+  const matches = ranked.filter((item) => item.score > 0);
+  return (matches.length ? matches : ranked).map((item) => item.doc).slice(0, 8);
+}
+
+function mergeEvidenceDocs(...groups: FirebaseFirestore.QueryDocumentSnapshot[]) {
+  const seen = new Set<string>();
+  return groups.filter((doc) => {
+    if (seen.has(doc.id)) return false;
+    seen.add(doc.id);
+    return true;
+  });
+}
+
 async function upsertCase(label: string, evidenceId: string, analysis: AnalysisResult, embedding: number[]) {
   const id = `case-${slugify(label)}`;
   const ref = db.collection("conspiracies").doc(id);
@@ -836,6 +885,7 @@ export const oracleAsk = onCall(
     secrets: [GEMINI_API_KEY]
   },
   async (request) => {
+    requireAdmin(request);
     const question = String(request.data?.question ?? "").trim();
     const credibilityMin = Math.max(0, Math.min(100, Number(request.data?.credibilityMin ?? 0)));
     if (!question) {
@@ -843,10 +893,16 @@ export const oracleAsk = onCall(
     }
 
     const apiKey = GEMINI_API_KEY.value();
-    const queryEmbedding = await embedText(question, apiKey);
-    const evidenceDocs = queryEmbedding.length
-      ? await findSimilarEvidence("__oracle__", queryEmbedding)
-      : (await db.collection("evidences").where("credibility_score", ">=", credibilityMin).limit(8).get()).docs;
+    let queryEmbedding: number[] = [];
+    try {
+      queryEmbedding = await embedText(question, apiKey);
+    } catch (error) {
+      logger.error("Oracle embedding failed; using keyword fallback", { error });
+    }
+
+    const vectorDocs = queryEmbedding.length ? await findSimilarEvidence("__oracle__", queryEmbedding) : [];
+    const fallbackDocs = vectorDocs.length < 3 ? await keywordEvidenceFallback(question, credibilityMin) : [];
+    const evidenceDocs = mergeEvidenceDocs(...vectorDocs, ...fallbackDocs);
 
     const candidates = evidenceDocs
       .map((doc) => ({ id: doc.id, ...doc.data() }) as FirebaseFirestore.DocumentData & { id: string })
@@ -863,13 +919,18 @@ export const oracleAsk = onCall(
     let answer = "No preserved evidence matched the question at the requested credibility threshold.";
     if (context) {
       if (apiKey) {
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: oraclePrompt({ question, credibilityMin, context }),
-          config: { temperature: 0.2 }
-        });
-        answer = response.text ?? answer;
+        try {
+          const ai = new GoogleGenAI({ apiKey });
+          const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: oraclePrompt({ question, credibilityMin, context }),
+            config: { temperature: 0.2 }
+          });
+          answer = response.text ?? answer;
+        } catch (error) {
+          logger.error("Oracle Gemini answer failed; returning retrieval summary", { error });
+          answer = "Gemini could not complete the reasoning step, so this is a retrieval summary over matching preserved evidence.";
+        }
       } else {
         answer = "Gemini is not configured, so this answer is a retrieval summary over matching preserved evidence.";
       }

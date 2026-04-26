@@ -84,33 +84,44 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
             <h2>Ask the preserved web</h2>
           </div>
         </div>
-        <form onSubmit={askOracle} className="oracle-form">
-          <textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder={suggestedPrompt}
-          />
-          <label className="oracle-slider">
-            <span>Minimum credibility: {credibilityMin}</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={credibilityMin}
-              onChange={(event) => setCredibilityMin(Number(event.target.value))}
+        {isAdminHint ? (
+          <form onSubmit={askOracle} className="oracle-form">
+            <textarea
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder={suggestedPrompt}
             />
-          </label>
-          <button className="primary-button" disabled={loading || !question.trim()}>
-            {loading ? <Loader2 className="spin" size={17} /> : <Send size={17} />}
-            Ask Oracle
-          </button>
-        </form>
-        {!isAdminHint ? <p className="system-message">Read-only users can ask questions, but only saved evidence is used.</p> : null}
+            <label className="oracle-slider">
+              <span>Minimum credibility: {credibilityMin}</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={credibilityMin}
+                onChange={(event) => setCredibilityMin(Number(event.target.value))}
+              />
+            </label>
+            <button className="primary-button" disabled={loading || !question.trim()}>
+              {loading ? <Loader2 className="spin" size={17} /> : <Send size={17} />}
+              Ask Oracle
+            </button>
+          </form>
+        ) : (
+          <div className="admin-only-panel">
+            <p className="red-label">Admin-only tool</p>
+            <span>The Oracle calls Gemini and is locked to approved admins so public visitors cannot spend API quota.</span>
+          </div>
+        )}
         {error ? <p className="error-text">{error}</p> : null}
       </section>
 
       <section className="oracle-answer">
-        {answer ? (
+        {!isAdminHint ? (
+          <div className="empty-oracle">
+            <Bot size={42} />
+            <p>The public archive remains browsable. Oracle questions are reserved for approved admins.</p>
+          </div>
+        ) : answer ? (
           <>
             <div className="answer-heading">
               <Sparkles size={18} />
