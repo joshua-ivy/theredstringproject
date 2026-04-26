@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
-import { Archive, Bot, FolderKanban, Network, Search } from "lucide-react";
+import { Archive, Bot, ClipboardCheck, FolderKanban, Network, Search } from "lucide-react";
+import { AdminMonitor } from "@/components/AdminMonitor";
 import { AnimatePresence, motion } from "framer-motion";
 import { AuthGate } from "@/components/AuthGate";
 import { CaseFiles } from "@/components/CaseFiles";
+import { EvidenceDetail } from "@/components/EvidenceDetail";
 import { EvidenceLocker } from "@/components/EvidenceLocker";
 import { OraclePanel } from "@/components/OraclePanel";
 import { RedStringBoard } from "@/components/RedStringBoard";
@@ -13,13 +15,14 @@ import { db } from "@/lib/firebase";
 import { sampleConnections, sampleConspiracies, sampleEvidence } from "@/lib/sample-data";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
-type ViewKey = "web" | "case-files" | "evidence-locker" | "oracle";
+type ViewKey = "web" | "case-files" | "evidence-locker" | "oracle" | "review";
 
 const views: Array<{ key: ViewKey; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { key: "web", label: "The Web", icon: Network },
   { key: "case-files", label: "Case Files", icon: FolderKanban },
   { key: "evidence-locker", label: "Evidence Locker", icon: Archive },
-  { key: "oracle", label: "The Oracle", icon: Bot }
+  { key: "oracle", label: "The Oracle", icon: Bot },
+  { key: "review", label: "Review", icon: ClipboardCheck }
 ];
 
 function iso(value: unknown) {
@@ -59,6 +62,7 @@ function AuthenticatedApp({
   const [searchTerm, setSearchTerm] = useState("");
   const [credibilityMin, setCredibilityMin] = useState(0);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(sampleEvidence[0]?.id ?? null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [evidences, setEvidences] = useState<Evidence[]>(sampleEvidence);
   const [conspiracies, setConspiracies] = useState<Conspiracy[]>(sampleConspiracies);
   const [connections, setConnections] = useState<Connection[]>(sampleConnections);
@@ -83,7 +87,8 @@ function AuthenticatedApp({
             archived_assets: data.archived_assets ?? [],
             linked_conspiracy_ids: data.linked_conspiracy_ids ?? [],
             tags: data.tags ?? [],
-            entities: data.entities ?? []
+            entities: data.entities ?? [],
+            review_status: data.review_status ?? "approved"
           } as Evidence;
         });
         if (docs.length > 0) {
@@ -167,6 +172,11 @@ function AuthenticatedApp({
     [evidences, filteredEvidence, selectedEvidenceId]
   );
 
+  const boardEvidence = useMemo(
+    () => filteredEvidence.filter((evidence) => (evidence.review_status ?? "approved") === "approved"),
+    [filteredEvidence]
+  );
+
   return (
     <main className="app-frame">
       <header className="app-header">
@@ -189,8 +199,8 @@ function AuthenticatedApp({
 
         <div className="header-meta">
           <span className={`status-dot ${dataStatus}`} />
-          <span>{dataStatus === "live" ? "Live Firestore" : dataStatus === "error" ? "Sample fallback" : "Sample data"}</span>
-          <span>{isAdminHint ? "Admin hint" : "Read only"}</span>
+          <span>{dataStatus === "live" ? "Connected" : dataStatus === "error" ? "Using demo records" : "Demo records"}</span>
+          <span>{isAdminHint ? "Evidence editor" : "Read only"}</span>
           <span>{userEmail}</span>
         </div>
       </header>
@@ -211,6 +221,10 @@ function AuthenticatedApp({
         })}
       </nav>
 
+      <div className="disclaimer-strip">
+        Exploratory pattern board. Evidence scores explain source quality and connection strength; they are not proof that a claim is true.
+      </div>
+
       <section className="workspace">
         <aside className="filter-rail">
           <label>
@@ -226,16 +240,16 @@ function AuthenticatedApp({
           </label>
           <div className="stat-stack">
             <p>
-              <span>{filteredEvidence.length}</span>
-              evidence
+              <span>{boardEvidence.length}</span>
+              board evidence
             </p>
             <p>
               <span>{connections.length}</span>
-              strings
+                strings
             </p>
             <p>
               <span>{conspiracies.length}</span>
-              cases
+                cases
             </p>
           </div>
         </aside>
@@ -251,21 +265,24 @@ function AuthenticatedApp({
           >
             {activeView === "web" ? (
               <RedStringBoard
-                evidences={filteredEvidence}
+                evidences={boardEvidence}
                 conspiracies={conspiracies}
                 connections={connections}
                 selectedEvidenceId={selectedEvidence?.id ?? null}
-                onSelectEvidence={setSelectedEvidenceId}
+                onSelectEvidence={(id) => {
+                  setSelectedEvidenceId(id);
+                  setMobileDetailOpen(true);
+                }}
               />
             ) : null}
 
             {activeView === "case-files" ? (
               <CaseFiles
                 conspiracies={conspiracies}
-                evidences={evidences}
+                evidences={boardEvidence}
                 connections={connections}
                 onOpenCase={(caseId) => {
-                  const firstEvidence = evidences.find((evidence) =>
+                  const firstEvidence = boardEvidence.find((evidence) =>
                     evidence.linked_conspiracy_ids.includes(caseId)
                   );
                   setSelectedEvidenceId(firstEvidence?.id ?? null);
@@ -288,50 +305,26 @@ function AuthenticatedApp({
             {activeView === "oracle" ? (
               <OraclePanel evidences={evidences} isAdminHint={isAdminHint} />
             ) : null}
+
+            {activeView === "review" ? (
+              <AdminMonitor evidences={evidences} isAdminHint={isAdminHint} />
+            ) : null}
           </motion.div>
         </AnimatePresence>
 
         <aside className="detail-panel">
-          <div className="detail-heading">
-            <p>Selected Node</p>
-            <span>{selectedEvidence?.archive_status ?? "none"}</span>
-          </div>
-          {selectedEvidence ? (
-            <>
-              <h2>{selectedEvidence.title}</h2>
-              <div className="credibility-meter">
-                <span style={{ width: `${selectedEvidence.credibility_score}%` }} />
-              </div>
-              <strong className="credibility-label">
-                Credibility: {selectedEvidence.credibility_score}/100
-              </strong>
-              <p>{selectedEvidence.credibility_explanation}</p>
-              <div className="entity-list">
-                {selectedEvidence.entities.map((entity) => (
-                  <span key={entity}>{entity}</span>
-                ))}
-              </div>
-              <a className="source-link" href={selectedEvidence.source_url} target="_blank" rel="noreferrer">
-                Evidence source
-              </a>
-              <div className="archive-list">
-                <h3>Preservation</h3>
-                {selectedEvidence.archived_assets.length > 0 ? (
-                  selectedEvidence.archived_assets.map((asset) => (
-                    <span key={`${asset.kind}-${asset.path}`}>
-                      {asset.kind}: {asset.path}
-                    </span>
-                  ))
-                ) : (
-                  <span>No local asset yet. Status: {selectedEvidence.archive_status}</span>
-                )}
-              </div>
-            </>
-          ) : (
-            <p>No evidence selected.</p>
-          )}
+          <EvidenceDetail evidence={selectedEvidence} />
         </aside>
       </section>
+
+      <button className="mobile-detail-button" onClick={() => setMobileDetailOpen(true)}>
+        Selected evidence
+      </button>
+      {mobileDetailOpen ? (
+        <div className="mobile-detail-sheet">
+          <EvidenceDetail evidence={selectedEvidence} onClose={() => setMobileDetailOpen(false)} />
+        </div>
+      ) : null}
     </main>
   );
 }

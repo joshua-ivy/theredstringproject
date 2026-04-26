@@ -4,6 +4,8 @@ export type ArchiveStatus = "archived" | "link_only" | "blocked" | "failed";
 
 export type ConnectionType = "supports" | "contradicts" | "correlates";
 
+export type ReviewStatus = "pending_review" | "approved" | "rejected";
+
 export interface ArchivedAsset {
   path: string;
   url?: string;
@@ -36,6 +38,8 @@ export interface EvidenceRecord {
   updated_at?: FirebaseFirestore.FieldValue | string;
   embedding?: number[];
   analysis_status: "queued" | "analyzing" | "complete" | "failed";
+  review_status: ReviewStatus;
+  review_note?: string;
   discovery_source?: string;
   notes?: string;
 }

@@ -105,7 +105,7 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
             Ask Oracle
           </button>
         </form>
-        {!isAdminHint ? <p className="system-message">Read-only users can ask, but server policy may restrict the callable.</p> : null}
+        {!isAdminHint ? <p className="system-message">Read-only users can ask questions, but only saved evidence is used.</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
       </section>
 

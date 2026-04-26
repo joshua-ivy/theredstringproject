@@ -53,7 +53,9 @@ export const sampleEvidence: Evidence[] = [
     content_hash: "sample-01",
     linked_conspiracy_ids: ["case-mkultra"],
     retrieved_at: now,
-    created_at: now
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "approved"
   },
   {
     id: "evidence-declassified-memo",
@@ -72,7 +74,9 @@ export const sampleEvidence: Evidence[] = [
     content_hash: "sample-02",
     linked_conspiracy_ids: ["case-mkultra"],
     retrieved_at: now,
-    created_at: now
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "approved"
   },
   {
     id: "evidence-uap-testimony",
@@ -91,7 +95,9 @@ export const sampleEvidence: Evidence[] = [
     content_hash: "sample-03",
     linked_conspiracy_ids: ["case-uap"],
     retrieved_at: now,
-    created_at: now
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "approved"
   },
   {
     id: "evidence-social-claim",
@@ -110,7 +116,9 @@ export const sampleEvidence: Evidence[] = [
     content_hash: "sample-04",
     linked_conspiracy_ids: ["case-election-media"],
     retrieved_at: now,
-    created_at: now
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "pending_review"
   },
   {
     id: "evidence-rss-news",
@@ -129,7 +137,9 @@ export const sampleEvidence: Evidence[] = [
     content_hash: "sample-05",
     linked_conspiracy_ids: ["case-mkultra", "case-uap"],
     retrieved_at: now,
-    created_at: now
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "approved"
   }
 ];
 

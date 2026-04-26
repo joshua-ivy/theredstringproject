@@ -24,6 +24,13 @@ npm run functions:build
 npm run emulators
 ```
 
+To seed starter records, authenticate with Application Default Credentials or set
+`GOOGLE_APPLICATION_CREDENTIALS` to a local service-account key path, then run:
+
+```bash
+npm run seed:sample
+```
+
 ## Important Security Note
 
 The file `the-red-string-project-firebase-adminsdk-fbsvc-270705aae1.json` is a service-account key.

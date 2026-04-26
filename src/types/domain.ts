@@ -4,6 +4,8 @@ export type ArchiveStatus = "archived" | "link_only" | "blocked" | "failed";
 
 export type ConnectionType = "supports" | "contradicts" | "correlates";
 
+export type ReviewStatus = "pending_review" | "approved" | "rejected";
+
 export interface ArchivedAsset {
   path: string;
   url?: string;
@@ -36,6 +38,9 @@ export interface Evidence {
   created_at: string;
   updated_at?: string;
   embedding?: number[];
+  analysis_status?: "queued" | "analyzing" | "complete" | "failed";
+  review_status?: ReviewStatus;
+  review_note?: string;
 }
 
 export interface Conspiracy {
@@ -68,4 +73,24 @@ export interface OracleCitation {
   sourceUrl: string;
   archiveStatus: ArchiveStatus;
   credibility: number;
+}
+
+export interface AnalysisJob {
+  id: string;
+  evidence_id: string;
+  status: "queued" | "running" | "complete" | "failed" | string;
+  error?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SearchRun {
+  id: string;
+  query: string;
+  provider: string;
+  status: "running" | "complete" | "failed" | string;
+  result_count?: number;
+  error?: string;
+  created_at?: string;
+  updated_at?: string;
 }

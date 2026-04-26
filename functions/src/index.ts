@@ -10,6 +10,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onTaskDispatched } from "firebase-functions/v2/tasks";
 import { GoogleGenAI } from "@google/genai";
 import { load } from "cheerio";
+import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 import type { AnalysisResult, ArchivedAsset, EvidenceRecord } from "./types.js";
 import { credibilityPrompt, oraclePrompt } from "./prompts.js";
@@ -38,6 +39,12 @@ const submitUploadSchema = z.object({
   sourceUrl: z.string().url().optional(),
   notes: z.string().max(4000).optional(),
   tags: z.array(z.string().min(1).max(40)).max(20).optional()
+});
+
+const reviewSchema = z.object({
+  evidenceId: z.string().min(1),
+  reviewStatus: z.enum(["pending_review", "approved", "rejected"]),
+  note: z.string().max(1200).optional()
 });
 
 function adminEmails() {
@@ -185,6 +192,16 @@ async function archiveBytes(path: string, bytes: Buffer, contentType: string, ki
   } satisfies ArchivedAsset;
 }
 
+async function extractPdfText(bytes: Buffer) {
+  const parser = new PDFParse({ data: bytes });
+  try {
+    const result = await parser.getText();
+    return result.text.replace(/\s+/g, " ").trim().slice(0, 32000);
+  } finally {
+    await parser.destroy();
+  }
+}
+
 async function enqueueAnalysis(evidenceId: string) {
   const queue = getFunctions().taskQueue("analyzeEvidenceTask");
   await queue.enqueue({ evidenceId }, { dispatchDeadlineSeconds: 540 });
@@ -231,6 +248,23 @@ async function createEvidenceFromUrl(input: {
       contentText = `${type.toUpperCase()} evidence archived from ${canonicalUrl}.`;
       const extension = type === "pdf" ? "pdf" : contentType.split("/")[1]?.split(";")[0] || "bin";
       archivedAssets.push(await archiveBytes(`${root}/source.${extension}`, bytes, contentType, type === "pdf" ? "pdf" : "image"));
+      if (type === "pdf") {
+        try {
+          const pdfText = await extractPdfText(bytes);
+          if (pdfText) {
+            contentText = pdfText;
+            archivedAssets.push(await archiveText(`${root}/extracted.txt`, pdfText));
+          }
+        } catch (error) {
+          logger.warn("PDF text extraction failed", { canonicalUrl, error });
+          archivedAssets.push(
+            await archiveJson(`${root}/pdf-extraction.json`, {
+              status: "failed",
+              reason: error instanceof Error ? error.message : String(error)
+            })
+          );
+        }
+      }
       archiveStatus = "archived";
     } else if (contentType.includes("html")) {
       const html = await response.text();
@@ -284,6 +318,7 @@ async function createEvidenceFromUrl(input: {
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp(),
     analysis_status: "queued",
+    review_status: input.discoverySource ? "pending_review" : "approved",
     discovery_source: input.discoverySource,
     notes: input.notes
   };
@@ -386,7 +421,10 @@ async function embedText(text: string, apiKey?: string) {
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.embedContent({
     model: "gemini-embedding-001",
-    contents: text.slice(0, 12000)
+    contents: text.slice(0, 12000),
+    config: {
+      outputDimensionality: 768
+    }
   });
   const embedding = response.embeddings?.[0]?.values;
   return Array.isArray(embedding) ? embedding : [];
@@ -490,13 +528,42 @@ export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (req
 
   const sourceUrl = input.sourceUrl ?? `storage://${archivePath}`;
   const type = evidenceTypeFromContent(metadata.contentType ?? "", archivePath);
+  let contentText = `Uploaded ${type} evidence preserved at ${archivePath}.`;
+  const archivedAssets: ArchivedAsset[] = [
+    {
+      path: archivePath,
+      kind: type === "pdf" ? "pdf" : type === "image" ? "image" : "source",
+      contentType: metadata.contentType ?? "application/octet-stream",
+      bytes: bytes.length,
+      hash: sha256(bytes)
+    }
+  ];
+
+  if (type === "pdf") {
+    try {
+      const pdfText = await extractPdfText(bytes);
+      if (pdfText) {
+        contentText = pdfText;
+        archivedAssets.push(await archiveText(`archives/${evidenceId}/extracted.txt`, pdfText));
+      }
+    } catch (error) {
+      logger.warn("Uploaded PDF text extraction failed", { evidenceId, error });
+      archivedAssets.push(
+        await archiveJson(`archives/${evidenceId}/pdf-extraction.json`, {
+          status: "failed",
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+  }
+
   const record: EvidenceRecord = {
     title: String(metadata.metadata?.originalName ?? metadata.name?.split("/").pop() ?? "Uploaded evidence"),
     type,
     platform: "user_upload",
     source_url: sourceUrl,
     canonical_url: sourceUrl,
-    content_text: `Uploaded ${type} evidence preserved at ${archivePath}.`,
+    content_text: contentText,
     media_url: archivePath,
     credibility_score: 0,
     credibility_explanation: "Queued for Gemini credibility analysis.",
@@ -505,27 +572,40 @@ export const submitEvidenceUpload = onCall({ region: "us-central1" }, async (req
     entities: [],
     tags: input.tags ?? [],
     archive_status: "archived",
-    archived_assets: [
-      {
-        path: archivePath,
-        kind: type === "pdf" ? "pdf" : type === "image" ? "image" : "source",
-        contentType: metadata.contentType ?? "application/octet-stream",
-        bytes: bytes.length,
-        hash: sha256(bytes)
-      }
-    ],
+    archived_assets: archivedAssets,
     content_hash: sha256(bytes),
     linked_conspiracy_ids: [],
     retrieved_at: FieldValue.serverTimestamp(),
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp(),
     analysis_status: "queued",
+    review_status: "approved",
     notes: input.notes
   };
 
   await db.collection("evidences").doc(evidenceId).set(record);
   await enqueueAnalysis(evidenceId);
   return { evidenceId, status: "queued" };
+});
+
+export const setEvidenceReviewStatus = onCall({ region: "us-central1" }, async (request) => {
+  const reviewerEmail = requireAdmin(request);
+  const input = reviewSchema.parse(request.data);
+  await db.collection("evidences").doc(input.evidenceId).set(
+    {
+      review_status: input.reviewStatus,
+      review_note: input.note ?? null,
+      reviewed_by: reviewerEmail,
+      reviewed_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp()
+    },
+    { merge: true }
+  );
+
+  return {
+    evidenceId: input.evidenceId,
+    reviewStatus: input.reviewStatus
+  };
 });
 
 export const analyzeEvidenceTask = onTaskDispatched(
@@ -552,6 +632,14 @@ export const analyzeEvidenceTask = onTaskDispatched(
       analysis_status: "analyzing",
       updated_at: FieldValue.serverTimestamp()
     });
+    await db.collection("analysis_jobs").doc(evidenceId).set(
+      {
+        evidence_id: evidenceId,
+        status: "running",
+        updated_at: FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
 
     try {
       const snap = await ref.get();

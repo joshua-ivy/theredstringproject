@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "functions:build": "npm --workspace functions run build",
+    "seed:sample": "node scripts/seed-sample-data.mjs",
     "emulators": "firebase emulators:start",
     "deploy": "npm run build && npm run functions:build && firebase deploy"
   },

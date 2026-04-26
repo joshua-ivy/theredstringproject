@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, DatabaseZap, FileSearch, ShieldCheck } from "lucide-react";
+import Image from "next/image";
+import { ArrowRight, FileSearch, Link2, MessageSquareQuote } from "lucide-react";
 
 export default function Home() {
   return (
@@ -27,38 +28,46 @@ export default function Home() {
         </div>
 
         <div className="hero-copy">
+          <Image
+            className="hero-logo"
+            src="/red-string-logo.png"
+            alt="The Red String Project eye and thread mark"
+            width={440}
+            height={220}
+            priority
+          />
           <p className="kicker">Every thread tells a story.</p>
           <h1>The Red String Project</h1>
           <p className="hero-text">
-            A cinematic Firebase web app for preserving evidence links, archiving allowed media,
-            scoring credibility, and exploring the web of claims through a living detective board.
+            Preserve sources, inspect credibility notes, and follow connected claims on a living
+            evidence board built for careful review.
           </p>
           <div className="hero-actions">
             <Link href="/app" className="primary-link">
               Open the board <ArrowRight size={18} />
             </Link>
-            <a href="#stack" className="secondary-link">
-              View stack
+            <a href="#how-it-works" className="secondary-link">
+              How it works
             </a>
           </div>
         </div>
       </section>
 
-      <section id="stack" className="landing-band">
+      <section id="how-it-works" className="landing-band">
         <div className="capability">
           <FileSearch />
-          <h2>Preserved Evidence</h2>
-          <p>Every record keeps source links, retrieval metadata, hashes, and archived assets when allowed.</p>
+          <h2>Save a source trail</h2>
+          <p>Each evidence record keeps the original link, retrieval time, hash, and any allowed archived files.</p>
         </div>
         <div className="capability">
-          <DatabaseZap />
-          <h2>Firebase Native</h2>
-          <p>Firestore, Storage, Functions v2, scheduled discovery, Cloud Tasks, Auth, and Hosting.</p>
+          <Link2 />
+          <h2>See why threads connect</h2>
+          <p>Open a node to read the credibility explanation, named entities, and the reason a string exists.</p>
         </div>
         <div className="capability">
-          <ShieldCheck />
-          <h2>Admin First</h2>
-          <p>V1 gates creation behind server-side admin checks while the public-facing product matures.</p>
+          <MessageSquareQuote />
+          <h2>Ask with citations</h2>
+          <p>The Oracle answers from saved evidence and points back to the records behind its response.</p>
         </div>
       </section>
     </main>

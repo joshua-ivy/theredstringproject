@@ -50,11 +50,11 @@ export function AuthGate({ children }: AuthGateProps) {
     return (
       <main className="auth-screen">
         <section className="auth-panel">
-          <p className="kicker">Admin access</p>
+          <p className="kicker">Private review board</p>
           <h1>The Red String Project</h1>
           <p>
-            Sign in with Google to open the board. Evidence creation is enforced again in
-            Cloud Functions through the server-side admin email allowlist.
+            Sign in with Google to open the evidence board. Publishing and cleanup tools are
+            available only to the approved reviewer.
           </p>
           <button className="primary-button" onClick={signIn}>
             <LogIn size={18} />
@@ -72,8 +72,8 @@ export function AuthGate({ children }: AuthGateProps) {
         <div className="admin-warning">
           <ShieldAlert size={16} />
           <span>
-            Signed in as {user.email}. This client is in read-only mode unless this email is in
-            NEXT_PUBLIC_ADMIN_EMAILS and the Functions ADMIN_EMAILS parameter.
+            Signed in as {user.email}. This account can inspect records, but only the approved
+            reviewer can add or publish evidence.
           </span>
         </div>
       ) : null}

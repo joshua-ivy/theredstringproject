@@ -128,8 +128,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
         {!isAdminHint ? (
           <div className="guard-note">
             <ShieldAlert size={17} />
-            This signed-in user is not in the client admin allowlist. Server Functions will reject writes unless
-            ADMIN_EMAILS also includes this email.
+            This account can inspect saved records. Adding evidence is limited to the approved reviewer.
           </div>
         ) : null}
 
@@ -155,7 +154,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
               placeholder="Context, why this matters, or source caveats"
             />
           </label>
-          <button className="primary-button" type="submit" disabled={submitting || !url.trim()}>
+          <button className="primary-button" type="submit" disabled={submitting || !url.trim() || !isAdminHint}>
             {submitting ? <Loader2 className="spin" size={17} /> : <LinkIcon size={17} />}
             Submit URL
           </button>
@@ -167,7 +166,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
             <span>{file ? file.name : "Choose upload"}</span>
             <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
           </label>
-          <button className="secondary-button" onClick={submitUpload} disabled={submitting || !file}>
+          <button className="secondary-button" onClick={submitUpload} disabled={submitting || !file || !isAdminHint}>
             Upload file
           </button>
           {uploadProgress !== null ? <span className="upload-progress">{uploadProgress}%</span> : null}
@@ -197,6 +196,9 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
             <article key={evidence.id} className="evidence-row" onClick={() => onSelect(evidence.id)}>
               <div>
                 <span className={`archive-chip ${evidence.archive_status}`}>{evidence.archive_status}</span>
+                <span className={`archive-chip ${evidence.review_status ?? "approved"}`}>
+                  {evidence.review_status ?? "approved"}
+                </span>
                 <h3>{evidence.title}</h3>
                 <p>{evidence.content_text}</p>
                 <div className="entity-list compact">
