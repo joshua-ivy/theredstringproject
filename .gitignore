@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# build outputs
+.next/
+out/
+dist/
+lib/
+coverage/
+*.log
+*.tsbuildinfo
+.firebase/
+next-dev.out.log
+next-dev.err.log
+logo.png
+logo2.png
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# local env
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Firebase secrets and service-account keys
+*firebase-adminsdk*.json
+service-account*.json
+the-red-string-project-firebase-adminsdk-fbsvc-270705aae1.json
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

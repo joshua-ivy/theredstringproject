@@ -1,0 +1,39 @@
+{
+  "name": "the-red-string-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Firebase-native investigative evidence board for preserved sources, credibility scoring, and red-string graph exploration.",
+  "workspaces": [
+    "functions"
+  ],
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "functions:build": "npm --workspace functions run build",
+    "emulators": "firebase emulators:start",
+    "deploy": "npm run build && npm run functions:build && firebase deploy"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "firebase": "^12.12.1",
+    "framer-motion": "^12.23.24",
+    "lucide-react": "^0.554.0",
+    "next": "^16.2.4",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/d3": "^7.4.3",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.2.4",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5.9.3"
+  }
+}
