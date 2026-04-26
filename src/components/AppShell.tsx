@@ -200,8 +200,9 @@ function AuthenticatedApp({
         <div className="header-meta">
           <span className={`status-dot ${dataStatus}`} />
           <span>{dataStatus === "live" ? "Connected" : dataStatus === "error" ? "Using demo records" : "Demo records"}</span>
-          <span>{isAdminHint ? "Evidence editor" : "Read only"}</span>
-          <span>{userEmail}</span>
+          <span className="role-chip" title={userEmail}>
+            {isAdminHint ? "Admin" : "Read only"}
+          </span>
         </div>
       </header>
 

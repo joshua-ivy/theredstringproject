@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
-import { Special_Elite, IBM_Plex_Mono } from "next/font/google";
+import { Inter, Special_Elite, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+
+const sans = Inter({
+  variable: "--font-sans",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"]
+});
 
 const typewriter = Special_Elite({
   variable: "--font-typewriter",
@@ -30,7 +36,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${typewriter.variable} ${mono.variable}`}>{children}</body>
+      <body className={`${sans.variable} ${typewriter.variable} ${mono.variable}`}>{children}</body>
     </html>
   );
 }

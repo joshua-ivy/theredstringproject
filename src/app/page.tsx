@@ -7,12 +7,17 @@ export default function Home() {
     <main className="site-shell">
       <section className="landing-hero">
         <div className="hero-board" aria-hidden="true">
-          <div className="hero-string hero-string-a" />
-          <div className="hero-string hero-string-b" />
-          <div className="hero-string hero-string-c" />
+          <div className="hero-artifact hero-artifact-a">CASE ID RS-041</div>
+          <div className="hero-artifact hero-artifact-b">retrieved 04.26</div>
+          <div className="hero-artifact hero-artifact-c">source hash verified</div>
           <div className="hero-pin hero-pin-a" />
           <div className="hero-pin hero-pin-b" />
           <div className="hero-pin hero-pin-c" />
+          <div className="hero-pin hero-pin-d" />
+          <div className="hero-string hero-string-a" />
+          <div className="hero-string hero-string-b" />
+          <div className="hero-string hero-string-c" />
+          <div className="hero-string hero-string-d" />
           <article className="hero-evidence hero-evidence-a">
             <span>ARCHIVED PDF</span>
             <strong>Church Committee</strong>
@@ -42,6 +47,24 @@ export default function Home() {
             Preserve sources, inspect credibility notes, and follow connected claims on a living
             evidence board built for careful review.
           </p>
+          <div className="hero-cluster" aria-label="Evidence review preview">
+            <div>
+              <span>Claim</span>
+              <strong>Agency records reference controlled research</strong>
+            </div>
+            <div>
+              <span>Evidence</span>
+              <strong>Archived PDF, original source retained</strong>
+            </div>
+            <div>
+              <span>Source Quality</span>
+              <strong>86 / 100</strong>
+            </div>
+            <div>
+              <span>Review Status</span>
+              <strong>Approved for board</strong>
+            </div>
+          </div>
           <div className="hero-actions">
             <Link href="/app" className="primary-link">
               Open the board <ArrowRight size={18} />

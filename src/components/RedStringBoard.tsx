@@ -18,6 +18,7 @@ type BoardNode = d3.SimulationNodeDatum & {
   kind: "evidence" | "case";
   credibility: number;
   archiveStatus?: string;
+  linkedCount: number;
   platform?: string;
   tags: string[];
 };
@@ -66,6 +67,7 @@ export function RedStringBoard({
       label: item.title,
       kind: "case" as const,
       credibility: item.credibility_avg,
+      linkedCount: item.evidence_count,
       tags: item.tags
     }));
 
@@ -75,6 +77,7 @@ export function RedStringBoard({
       kind: "evidence" as const,
       credibility: item.credibility_score,
       archiveStatus: item.archive_status,
+      linkedCount: item.linked_conspiracy_ids.length,
       platform: item.platform,
       tags: item.tags
     }));
@@ -142,10 +145,11 @@ export function RedStringBoard({
 
     const zoomLayer = svg.append("g").attr("class", "zoom-layer");
     const grid = zoomLayer.append("g").attr("class", "board-grid");
+    const ghostLayer = zoomLayer.append("g").attr("class", "ghost-archive-layer");
     const linkLayer = zoomLayer.append("g").attr("class", "string-layer");
     const nodeLayer = zoomLayer.append("g").attr("class", "node-layer");
 
-    const gridStep = 42;
+    const gridStep = 50;
     for (let x = -width; x <= width * 2; x += gridStep) {
       grid
         .append("line")
@@ -163,6 +167,35 @@ export function RedStringBoard({
         .attr("y2", y);
     }
 
+    const ghostArtifacts = [
+      { x: width * 0.1, y: height * 0.2, label: "RS-014 / retrieved" },
+      { x: width * 0.78, y: height * 0.18, label: "entity index" },
+      { x: width * 0.18, y: height * 0.78, label: "source fragment" },
+      { x: width * 0.76, y: height * 0.74, label: "case note" },
+      { x: width * 0.52, y: height * 0.12, label: "archived text" }
+    ];
+
+    const ghostSelection = ghostLayer
+      .selectAll<SVGGElement, (typeof ghostArtifacts)[number]>("g")
+      .data(ghostArtifacts)
+      .join("g")
+      .attr("class", "ghost-artifact")
+      .attr("transform", (d, index) => `translate(${d.x},${d.y}) rotate(${index % 2 === 0 ? -5 : 4})`);
+
+    ghostSelection.append("rect").attr("x", -52).attr("y", -28).attr("width", 104).attr("height", 56).attr("rx", 3);
+    ghostSelection.append("circle").attr("r", 4).attr("cy", -28).attr("class", "ghost-pin");
+    ghostSelection.append("text").attr("text-anchor", "middle").attr("dy", 4).text((d) => d.label);
+
+    ghostLayer
+      .selectAll<SVGLineElement, (typeof ghostArtifacts)[number]>("line")
+      .data(ghostArtifacts.slice(1))
+      .join("line")
+      .attr("class", "ghost-string")
+      .attr("x1", ghostArtifacts[0].x)
+      .attr("y1", ghostArtifacts[0].y)
+      .attr("x2", (d) => d.x)
+      .attr("y2", (d) => d.y);
+
     const localNodes: BoardNode[] = nodes.map((node, index) => ({
       ...node,
       x: width / 2 + Math.cos(index) * Math.min(width, height) * 0.22,
@@ -179,6 +212,21 @@ export function RedStringBoard({
       .attr("opacity", (d) => 0.25 + d.weight * 0.65)
       .attr("filter", (d) => (d.weight > 0.65 ? "url(#red-glow)" : null));
 
+    const endpointSelection = linkLayer
+      .selectAll<SVGCircleElement, { id: string; link: BoardLink; end: "source" | "target"; weight: number }>(
+        "circle"
+      )
+      .data(
+        localLinks.flatMap((link) => [
+          { id: `${link.id}-source`, link, end: "source" as const, weight: link.weight },
+          { id: `${link.id}-target`, link, end: "target" as const, weight: link.weight }
+        ]),
+        (d) => d.id
+      )
+      .join("circle")
+      .attr("class", "string-endpoint")
+      .attr("r", (d) => 2.8 + d.weight * 2.8);
+
     const nodeSelection = nodeLayer
       .selectAll<SVGGElement, BoardNode>("g")
       .data(localNodes, (d) => d.id)
@@ -194,54 +242,73 @@ export function RedStringBoard({
     nodeSelection
       .filter((d) => d.kind === "case")
       .append("circle")
-      .attr("r", (d) => 28 + d.credibility / 10)
-      .attr("class", "case-core")
-      .attr("filter", "url(#red-glow)");
+      .attr("r", (d) => 40 + d.credibility / 12)
+      .attr("class", "case-aura");
+
+    nodeSelection
+      .filter((d) => d.kind === "case")
+      .append("circle")
+      .attr("r", (d) => 22 + d.credibility / 14)
+      .attr("class", "case-core");
 
     nodeSelection
       .filter((d) => d.kind === "case")
       .append("text")
       .attr("class", "case-label")
       .attr("text-anchor", "middle")
-      .attr("dy", 54)
+      .attr("dy", 58)
       .text((d) => d.label);
 
     const evidenceNodes = nodeSelection.filter((d) => d.kind === "evidence");
     evidenceNodes
       .append("rect")
-      .attr("x", -54)
-      .attr("y", -39)
-      .attr("width", 108)
-      .attr("height", 78)
+      .attr("x", -72)
+      .attr("y", -51)
+      .attr("width", 144)
+      .attr("height", 102)
       .attr("rx", 4)
       .attr("class", "evidence-card-svg");
 
     evidenceNodes
       .append("circle")
-      .attr("r", 9)
-      .attr("cy", -40)
+      .attr("r", 10)
+      .attr("cy", -52)
       .attr("class", "node-pin");
 
     evidenceNodes
       .append("text")
       .attr("class", "platform-label")
-      .attr("x", -44)
-      .attr("y", -18)
-      .text((d) => d.platform ?? "web");
+      .attr("x", -60)
+      .attr("y", -28)
+      .text((d) => `${d.platform ?? "web"} / ${d.archiveStatus ?? "link"}`);
 
     evidenceNodes
       .append("text")
       .attr("class", "evidence-label")
-      .attr("x", -44)
-      .attr("y", 4)
-      .text((d) => d.label.slice(0, 23));
+      .attr("x", -60)
+      .attr("y", -4)
+      .text((d) => d.label.slice(0, 28));
+
+    evidenceNodes
+      .append("text")
+      .attr("class", "evidence-label secondary")
+      .attr("x", -60)
+      .attr("y", 13)
+      .text((d) => (d.label.length > 28 ? d.label.slice(28, 52) : ""));
 
     evidenceNodes
       .append("text")
       .attr("class", "cred-label")
-      .attr("x", -44)
-      .attr("y", 26)
-      .text((d) => `${Math.round(d.credibility)}/100`);
+      .attr("x", -60)
+      .attr("y", 36)
+      .text((d) => `${Math.round(d.credibility)}/100 credibility`);
+
+    evidenceNodes
+      .append("text")
+      .attr("class", "link-count-label")
+      .attr("x", 10)
+      .attr("y", 36)
+      .text((d) => `${d.linkedCount} case${d.linkedCount === 1 ? "" : "s"}`);
 
     const simulation = d3
       .forceSimulation<BoardNode>(localNodes)
@@ -250,12 +317,12 @@ export function RedStringBoard({
         d3
           .forceLink<BoardNode, BoardLink>(localLinks)
           .id((d) => d.id)
-          .distance((d) => 160 - d.weight * 56)
-          .strength((d) => 0.12 + d.weight * 0.3)
+          .distance((d) => 185 - d.weight * 48)
+          .strength((d) => 0.14 + d.weight * 0.32)
       )
-      .force("charge", d3.forceManyBody().strength(-420))
+      .force("charge", d3.forceManyBody().strength(-520))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide<BoardNode>().radius((d) => (d.kind === "case" ? 72 : 70)))
+      .force("collision", d3.forceCollide<BoardNode>().radius((d) => (d.kind === "case" ? 86 : 94)))
       .alpha(0.92);
 
     function dragstarted(event: d3.D3DragEvent<SVGGElement, BoardNode, BoardNode>) {
@@ -309,6 +376,10 @@ export function RedStringBoard({
         const curve = Math.sqrt(dx * dx + dy * dy) * 0.22;
         return `M${sx},${sy} C${sx + dx * 0.48},${sy - curve} ${tx - dx * 0.48},${ty + curve} ${tx},${ty}`;
       });
+
+      endpointSelection
+        .attr("cx", (d) => ((d.link[d.end] as BoardNode).x ?? width / 2))
+        .attr("cy", (d) => ((d.link[d.end] as BoardNode).y ?? height / 2));
 
       nodeSelection.attr("transform", (d) => `translate(${d.x ?? width / 2},${d.y ?? height / 2})`);
     });
