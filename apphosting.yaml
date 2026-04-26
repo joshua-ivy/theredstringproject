@@ -5,6 +5,12 @@ runConfig:
   memoryMiB: 512
 
 env:
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    secret: NEXT_PUBLIC_FIREBASE_API_KEY
+    availability:
+      - BUILD
+      - RUNTIME
+
   - variable: NEXT_PUBLIC_ADMIN_EMAILS
     value: jivy26@gmail.com
     availability:

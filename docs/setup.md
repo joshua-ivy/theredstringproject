@@ -11,6 +11,8 @@
    ```bash
    cp .env.local.example .env.local
    ```
+   Fill in `NEXT_PUBLIC_FIREBASE_API_KEY` from the Firebase console or from the App Hosting secret.
+   Keep `.env.local` local only; do not commit SDK snippets or key dumps.
 
 3. Start the Next.js app:
    ```bash

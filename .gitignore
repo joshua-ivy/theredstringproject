@@ -16,6 +16,7 @@ next-dev.out.log
 next-dev.err.log
 logo.png
 logo2.png
+firebasesdk.txt
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
