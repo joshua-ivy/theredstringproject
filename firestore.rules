@@ -16,17 +16,17 @@ service cloud.firestore {
     }
 
     match /conspiracies/{docId} {
-      allow read: if signedIn();
+      allow read: if true;
       allow write: if admin();
     }
 
     match /evidences/{docId} {
-      allow read: if signedIn();
+      allow read: if true;
       allow write: if admin();
     }
 
     match /connections/{docId} {
-      allow read: if signedIn();
+      allow read: if true;
       allow write: if admin();
     }
 

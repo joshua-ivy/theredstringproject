@@ -12,6 +12,7 @@ coverage/
 *.log
 *.tsbuildinfo
 .firebase/
+GUIDE/
 next-dev.out.log
 next-dev.err.log
 logo.png

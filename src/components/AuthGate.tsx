@@ -3,12 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "firebase/auth";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { LogIn, LogOut, ShieldAlert } from "lucide-react";
 import { auth, googleProvider, initAnalytics } from "@/lib/firebase";
 import { isAdminEmail } from "@/lib/admin";
 
 interface AuthGateProps {
-  children: (props: { user: User; isAdminHint: boolean }) => React.ReactNode;
+  children: (props: {
+    user: User | null;
+    isAdminHint: boolean;
+    authLoading: boolean;
+    authError: string | null;
+    signIn: () => Promise<void>;
+    signOut: () => Promise<void>;
+  }) => React.ReactNode;
 }
 
 export function AuthGate({ children }: AuthGateProps) {
@@ -35,52 +41,14 @@ export function AuthGate({ children }: AuthGateProps) {
     }
   }
 
-  if (loading) {
-    return (
-      <main className="app-loading">
-        <div className="loading-card">
-          <span className="scanline" />
-          <p>Warming the evidence lamp...</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (!user) {
-    return (
-      <main className="auth-screen">
-        <section className="auth-panel">
-          <p className="kicker">Private review board</p>
-          <h1>The Red String Project</h1>
-          <p>
-            Sign in with Google to open the evidence board. Publishing and cleanup tools are
-            available only to the approved reviewer.
-          </p>
-          <button className="primary-button" onClick={signIn}>
-            <LogIn size={18} />
-            Continue with Google
-          </button>
-          {authError ? <p className="error-text">{authError}</p> : null}
-        </section>
-      </main>
-    );
-  }
-
   return (
-    <>
-      {!isAdminHint ? (
-        <div className="admin-warning">
-          <ShieldAlert size={16} />
-          <span>
-            Signed in as {user.email}. This account can inspect records, but only the approved
-            reviewer can add or publish evidence.
-          </span>
-        </div>
-      ) : null}
-      {children({ user, isAdminHint })}
-      <button className="floating-signout" onClick={() => void signOut(auth)} title="Sign out">
-        <LogOut size={17} />
-      </button>
-    </>
+    children({
+      user,
+      isAdminHint,
+      authLoading: loading,
+      authError,
+      signIn,
+      signOut: () => signOut(auth)
+    })
   );
 }

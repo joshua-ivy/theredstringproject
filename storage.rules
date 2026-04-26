@@ -11,7 +11,7 @@ service firebase.storage {
     }
 
     match /archives/{allPaths=**} {
-      allow read: if signedIn();
+      allow read: if true;
       allow write: if admin();
     }
 

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Special_Elite, IBM_Plex_Mono } from "next/font/google";
+import { Inter, Special_Elite, JetBrains_Mono, Cutive_Mono } from "next/font/google";
 import "./globals.css";
 
 const sans = Inter({
@@ -14,10 +14,16 @@ const typewriter = Special_Elite({
   weight: "400"
 });
 
-const mono = IBM_Plex_Mono({
+const mono = JetBrains_Mono({
   variable: "--font-mono",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"]
+});
+
+const cutive = Cutive_Mono({
+  variable: "--font-ui-mono",
+  subsets: ["latin"],
+  weight: "400"
 });
 
 export const metadata: Metadata = {
@@ -36,7 +42,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${sans.variable} ${typewriter.variable} ${mono.variable}`}>{children}</body>
+      <body className={`${sans.variable} ${typewriter.variable} ${mono.variable} ${cutive.variable}`}>{children}</body>
     </html>
   );
 }

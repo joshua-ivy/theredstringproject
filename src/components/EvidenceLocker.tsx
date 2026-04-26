@@ -128,7 +128,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
         {!isAdminHint ? (
           <div className="guard-note">
             <ShieldAlert size={17} />
-            This account can inspect saved records. Adding evidence is limited to the approved reviewer.
+            Public visitors can inspect saved records. Adding evidence is limited to the approved admin.
           </div>
         ) : null}
 

@@ -32,6 +32,10 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isAdminHint) {
+      return;
+    }
+
     const jobQuery = query(collection(db, "analysis_jobs"), orderBy("updated_at", "desc"), limit(30));
     const runQuery = query(collection(db, "search_runs"), orderBy("created_at", "desc"), limit(20));
 
@@ -81,7 +85,7 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
       unsubscribeJobs();
       unsubscribeRuns();
     };
-  }, []);
+  }, [isAdminHint]);
 
   const pendingEvidence = useMemo(
     () => evidences.filter((evidence) => (evidence.review_status ?? "approved") === "pending_review"),
@@ -94,6 +98,8 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
       ),
     [evidences]
   );
+  const visibleAnalysisJobs = isAdminHint ? analysisJobs : [];
+  const visibleSearchRuns = isAdminHint ? searchRuns : [];
 
   async function setReviewStatus(evidenceId: string, reviewStatus: ReviewStatus) {
     setBusyId(evidenceId);
@@ -126,7 +132,9 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
             <h2>Evidence waiting for the board</h2>
           </div>
         </div>
-        {!isAdminHint ? <p className="system-message">Only the approved admin can change review status.</p> : null}
+        {!isAdminHint ? (
+          <p className="system-message">Sign in as the approved admin to inspect review jobs, search runs, and queue actions.</p>
+        ) : null}
         {message ? <p className="system-message">{message}</p> : null}
         {pendingEvidence.length ? (
           <div className="review-list">
@@ -136,11 +144,19 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
                 <h3>{evidence.title}</h3>
                 <p>{evidence.content_text}</p>
                 <div className="review-actions">
-                  <button className="primary-button" disabled={!isAdminHint || busyId === evidence.id} onClick={() => void setReviewStatus(evidence.id, "approved")}>
+                  <button
+                    className="primary-button"
+                    disabled={!isAdminHint || busyId === evidence.id}
+                    onClick={() => void setReviewStatus(evidence.id, "approved")}
+                  >
                     {busyId === evidence.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
                     Approve
                   </button>
-                  <button className="secondary-button" disabled={!isAdminHint || busyId === evidence.id} onClick={() => void setReviewStatus(evidence.id, "rejected")}>
+                  <button
+                    className="secondary-button"
+                    disabled={!isAdminHint || busyId === evidence.id}
+                    onClick={() => void setReviewStatus(evidence.id, "rejected")}
+                  >
                     <XCircle size={16} />
                     Reject
                   </button>
@@ -162,27 +178,35 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
           </div>
         </div>
         <div className="monitor-stats">
-          <p><strong>{analysisJobs.filter((job) => job.status === "failed").length}</strong> failed analysis jobs</p>
+          <p><strong>{visibleAnalysisJobs.filter((job) => job.status === "failed").length}</strong> failed analysis jobs</p>
           <p><strong>{failedEvidence.length}</strong> evidence records need attention</p>
-          <p><strong>{searchRuns.filter((run) => run.status === "complete").length}</strong> completed search runs</p>
+          <p><strong>{visibleSearchRuns.filter((run) => run.status === "complete").length}</strong> completed search runs</p>
         </div>
         <div className="job-list">
-          {analysisJobs.length ? analysisJobs.map((job) => (
-            <article key={job.id} className="job-row">
-              <strong>{job.evidence_id}</strong>
-              <span>{job.status}</span>
-              {job.error ? <p>{job.error}</p> : null}
-            </article>
-          )) : <div className="empty-state">No analysis jobs have run yet. Submit evidence or wait for the next scheduled search.</div>}
+          {visibleAnalysisJobs.length ? (
+            visibleAnalysisJobs.map((job) => (
+              <article key={job.id} className="job-row">
+                <strong>{job.evidence_id}</strong>
+                <span>{job.status}</span>
+                {job.error ? <p>{job.error}</p> : null}
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">No analysis jobs have run yet. Submit evidence or wait for the next scheduled search.</div>
+          )}
         </div>
         <div className="job-list">
-          {searchRuns.length ? searchRuns.map((run) => (
-            <article key={run.id} className="job-row">
-              <strong>{run.query}</strong>
-              <span>{run.status} · {run.result_count ?? 0} results</span>
-              {run.error ? <p>{run.error}</p> : null}
-            </article>
-          )) : <div className="empty-state">No search runs have been recorded yet.</div>}
+          {visibleSearchRuns.length ? (
+            visibleSearchRuns.map((run) => (
+              <article key={run.id} className="job-row">
+                <strong>{run.query}</strong>
+                <span>{run.status} / {run.result_count ?? 0} results</span>
+                {run.error ? <p>{run.error}</p> : null}
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">No search runs have been recorded yet.</div>
+          )}
         </div>
       </section>
     </div>

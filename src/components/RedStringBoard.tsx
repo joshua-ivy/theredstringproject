@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import * as d3 from "d3";
+import { useMemo, useState } from "react";
+import { ZoomIn, ZoomOut } from "lucide-react";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 interface RedStringBoardProps {
@@ -12,25 +12,65 @@ interface RedStringBoardProps {
   onSelectEvidence: (id: string) => void;
 }
 
-type BoardNode = d3.SimulationNodeDatum & {
-  id: string;
-  label: string;
-  kind: "evidence" | "case";
-  credibility: number;
-  archiveStatus?: string;
-  linkedCount: number;
-  platform?: string;
-  tags: string[];
-};
+type NodeKind = "evidence" | "case";
 
-type BoardLink = d3.SimulationLinkDatum<BoardNode> & {
+interface BoardNode {
   id: string;
-  source: string | BoardNode;
-  target: string | BoardNode;
+  kind: NodeKind;
+  x: number;
+  y: number;
+  rotate?: number;
+}
+
+interface BoardString {
+  id: string;
+  source: string;
+  target: string;
   weight: number;
   type: string;
-  reason: string;
-};
+}
+
+const BOARD_WIDTH = 1400;
+const BOARD_HEIGHT = 800;
+
+const evidenceSlots = [
+  { x: 214, y: 172, rotate: -3 },
+  { x: 456, y: 154, rotate: 2 },
+  { x: 712, y: 182, rotate: -2 },
+  { x: 1004, y: 164, rotate: 3 },
+  { x: 302, y: 394, rotate: 2 },
+  { x: 566, y: 442, rotate: -3 },
+  { x: 850, y: 426, rotate: 1 },
+  { x: 1142, y: 392, rotate: -2 },
+  { x: 252, y: 628, rotate: -2 },
+  { x: 520, y: 640, rotate: 3 },
+  { x: 798, y: 646, rotate: -1 },
+  { x: 1084, y: 624, rotate: 2 }
+];
+
+const caseSlots = [
+  { x: 407, y: 338 },
+  { x: 738, y: 374 },
+  { x: 1058, y: 520 },
+  { x: 620, y: 586 },
+  { x: 936, y: 276 }
+];
+
+const ghostArtifacts = [
+  { x: 126, y: 314, rotate: -7, label: "RS-011 / unresolved" },
+  { x: 1208, y: 222, rotate: 5, label: "source fragment" },
+  { x: 180, y: 706, rotate: 2, label: "retrieved 04.26" },
+  { x: 1200, y: 696, rotate: -4, label: "entity index" },
+  { x: 686, y: 92, rotate: -2, label: "hash verified" }
+];
+
+function hashNumber(value: string) {
+  return [...value].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function shortTitle(value: string, max = 46) {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
 
 export function RedStringBoard({
   evidences,
@@ -39,361 +79,264 @@ export function RedStringBoard({
   selectedEvidenceId,
   onSelectEvidence
 }: RedStringBoardProps) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState({ width: 960, height: 620 });
+  const [zoom, setZoom] = useState(0.92);
+  const [pan, setPan] = useState({ x: -32, y: 24 });
+  const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
+  const [drag, setDrag] = useState<
+    | { mode: "pan"; startX: number; startY: number; originX: number; originY: number }
+    | { mode: "node"; id: string; startX: number; startY: number; originX: number; originY: number }
+    | null
+  >(null);
 
-  useEffect(() => {
-    if (!wrapRef.current) {
-      return;
-    }
+  const baseNodes = useMemo(() => {
+    const nodes: BoardNode[] = [];
 
-    const observer = new ResizeObserver(([entry]) => {
-      if (!entry) {
-        return;
-      }
-      setSize({
-        width: Math.max(320, entry.contentRect.width),
-        height: Math.max(420, entry.contentRect.height)
+    conspiracies.forEach((item, index) => {
+      const slot = caseSlots[index % caseSlots.length];
+      nodes.push({
+        id: item.id,
+        kind: "case",
+        x: slot.x + Math.floor(index / caseSlots.length) * 54,
+        y: slot.y + Math.floor(index / caseSlots.length) * 42
       });
     });
-    observer.observe(wrapRef.current);
-    return () => observer.disconnect();
-  }, []);
 
-  const nodes = useMemo<BoardNode[]>(() => {
-    const caseNodes = conspiracies.map((item) => ({
-      id: item.id,
-      label: item.title,
-      kind: "case" as const,
-      credibility: item.credibility_avg,
-      linkedCount: item.evidence_count,
-      tags: item.tags
-    }));
+    evidences.forEach((item, index) => {
+      const slot = evidenceSlots[index % evidenceSlots.length];
+      const ring = Math.floor(index / evidenceSlots.length);
+      const drift = ring * 52;
+      nodes.push({
+        id: item.id,
+        kind: "evidence",
+        x: Math.min(1240, slot.x + drift),
+        y: Math.min(700, slot.y + drift * 0.6),
+        rotate: slot.rotate + (hashNumber(item.id) % 5) - 2
+      });
+    });
 
-    const evidenceNodes = evidences.map((item) => ({
-      id: item.id,
-      label: item.title,
-      kind: "evidence" as const,
-      credibility: item.credibility_score,
-      archiveStatus: item.archive_status,
-      linkedCount: item.linked_conspiracy_ids.length,
-      platform: item.platform,
-      tags: item.tags
-    }));
-
-    return [...caseNodes, ...evidenceNodes];
+    return nodes;
   }, [conspiracies, evidences]);
 
-  const links = useMemo<BoardLink[]>(() => {
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    const explicitLinks = connections
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, BoardNode>();
+    baseNodes.forEach((node) => map.set(node.id, nodePositions[node.id] ?? node));
+    return map;
+  }, [baseNodes, nodePositions]);
+
+  const boardStrings = useMemo<BoardString[]>(() => {
+    const nodeIds = new Set(baseNodes.map((node) => node.id));
+    const explicit = connections
       .filter((connection) => nodeIds.has(connection.from) && nodeIds.has(connection.to))
       .map((connection) => ({
         id: connection.id,
         source: connection.from,
         target: connection.to,
         weight: connection.weight,
-        type: connection.type,
-        reason: connection.ai_reason
+        type: connection.type
       }));
 
-    const evidenceCaseLinks = evidences.flatMap((evidence) =>
+    const implicit = evidences.flatMap((evidence) =>
       evidence.linked_conspiracy_ids
         .filter((caseId) => nodeIds.has(caseId))
         .map((caseId) => ({
           id: `${evidence.id}-${caseId}`,
           source: evidence.id,
           target: caseId,
-          weight: Math.max(0.2, evidence.credibility_score / 100),
-          type: "correlates",
-          reason: "Evidence record lists this case as a linked conspiracy."
+          weight: Math.max(0.24, evidence.credibility_score / 100),
+          type: "correlates"
         }))
     );
 
-    const deduped = new Map<string, BoardLink>();
-    [...explicitLinks, ...evidenceCaseLinks].forEach((link) => deduped.set(link.id, link));
+    const deduped = new Map<string, BoardString>();
+    [...explicit, ...implicit].forEach((item) => deduped.set(item.id, item));
     return Array.from(deduped.values());
-  }, [connections, evidences, nodes]);
+  }, [baseNodes, connections, evidences]);
 
-  useEffect(() => {
-    if (!svgRef.current) {
+  function pathFor(source: { x: number; y: number }, target: { x: number; y: number }, index: number) {
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+    const bend = (index % 2 === 0 ? 1 : -1) * Math.min(92, Math.sqrt(dx * dx + dy * dy) * 0.18);
+    const cx = source.x + dx * 0.5 - dy * 0.08;
+    const cy = source.y + dy * 0.5 + bend;
+    return `M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`;
+  }
+
+  function beginPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({ mode: "pan", startX: event.clientX, startY: event.clientY, originX: pan.x, originY: pan.y });
+  }
+
+  function beginNodeDrag(event: React.PointerEvent<HTMLElement>, id: string) {
+    event.stopPropagation();
+    const node = nodeMap.get(id);
+    if (!node) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({ mode: "node", id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y });
+  }
+
+  function movePointer(event: React.PointerEvent<HTMLDivElement>) {
+    if (!drag) {
       return;
     }
 
-    const svg = d3.select<SVGSVGElement, unknown>(svgRef.current);
-    svg.selectAll("*").remove();
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
 
-    const width = size.width;
-    const height = size.height;
-    svg.attr("viewBox", `0 0 ${width} ${height}`);
-
-    const defs = svg.append("defs");
-    const glow = defs.append("filter").attr("id", "red-glow");
-    glow.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "coloredBlur");
-    const merge = glow.append("feMerge");
-    merge.append("feMergeNode").attr("in", "coloredBlur");
-    merge.append("feMergeNode").attr("in", "SourceGraphic");
-
-    const paper = defs
-      .append("linearGradient")
-      .attr("id", "paper-gradient")
-      .attr("x1", "0%")
-      .attr("x2", "100%");
-    paper.append("stop").attr("offset", "0%").attr("stop-color", "#f6ead2");
-    paper.append("stop").attr("offset", "100%").attr("stop-color", "#d5c29f");
-
-    const zoomLayer = svg.append("g").attr("class", "zoom-layer");
-    const grid = zoomLayer.append("g").attr("class", "board-grid");
-    const ghostLayer = zoomLayer.append("g").attr("class", "ghost-archive-layer");
-    const linkLayer = zoomLayer.append("g").attr("class", "string-layer");
-    const nodeLayer = zoomLayer.append("g").attr("class", "node-layer");
-
-    const gridStep = 50;
-    for (let x = -width; x <= width * 2; x += gridStep) {
-      grid
-        .append("line")
-        .attr("x1", x)
-        .attr("x2", x)
-        .attr("y1", -height)
-        .attr("y2", height * 2);
-    }
-    for (let y = -height; y <= height * 2; y += gridStep) {
-      grid
-        .append("line")
-        .attr("x1", -width)
-        .attr("x2", width * 2)
-        .attr("y1", y)
-        .attr("y2", y);
+    if (drag.mode === "pan") {
+      setPan({ x: drag.originX + dx, y: drag.originY + dy });
+      return;
     }
 
-    const ghostArtifacts = [
-      { x: width * 0.1, y: height * 0.2, label: "RS-014 / retrieved" },
-      { x: width * 0.78, y: height * 0.18, label: "entity index" },
-      { x: width * 0.18, y: height * 0.78, label: "source fragment" },
-      { x: width * 0.76, y: height * 0.74, label: "case note" },
-      { x: width * 0.52, y: height * 0.12, label: "archived text" }
-    ];
-
-    const ghostSelection = ghostLayer
-      .selectAll<SVGGElement, (typeof ghostArtifacts)[number]>("g")
-      .data(ghostArtifacts)
-      .join("g")
-      .attr("class", "ghost-artifact")
-      .attr("transform", (d, index) => `translate(${d.x},${d.y}) rotate(${index % 2 === 0 ? -5 : 4})`);
-
-    ghostSelection.append("rect").attr("x", -52).attr("y", -28).attr("width", 104).attr("height", 56).attr("rx", 3);
-    ghostSelection.append("circle").attr("r", 4).attr("cy", -28).attr("class", "ghost-pin");
-    ghostSelection.append("text").attr("text-anchor", "middle").attr("dy", 4).text((d) => d.label);
-
-    ghostLayer
-      .selectAll<SVGLineElement, (typeof ghostArtifacts)[number]>("line")
-      .data(ghostArtifacts.slice(1))
-      .join("line")
-      .attr("class", "ghost-string")
-      .attr("x1", ghostArtifacts[0].x)
-      .attr("y1", ghostArtifacts[0].y)
-      .attr("x2", (d) => d.x)
-      .attr("y2", (d) => d.y);
-
-    const localNodes: BoardNode[] = nodes.map((node, index) => ({
-      ...node,
-      x: width / 2 + Math.cos(index) * Math.min(width, height) * 0.22,
-      y: height / 2 + Math.sin(index) * Math.min(width, height) * 0.22
+    setNodePositions((current) => ({
+      ...current,
+      [drag.id]: {
+        ...(current[drag.id] ?? nodeMap.get(drag.id)),
+        x: Math.max(70, Math.min(BOARD_WIDTH - 70, drag.originX + dx / zoom)),
+        y: Math.max(70, Math.min(BOARD_HEIGHT - 70, drag.originY + dy / zoom))
+      }
     }));
-    const localLinks = links.map((link) => ({ ...link }));
+  }
 
-    const linkSelection = linkLayer
-      .selectAll<SVGPathElement, BoardLink>("path")
-      .data(localLinks, (d) => d.id)
-      .join("path")
-      .attr("class", (d) => `red-string ${d.type}`)
-      .attr("stroke-width", (d) => 0.8 + d.weight * 4.2)
-      .attr("opacity", (d) => 0.25 + d.weight * 0.65)
-      .attr("filter", (d) => (d.weight > 0.65 ? "url(#red-glow)" : null));
-
-    const endpointSelection = linkLayer
-      .selectAll<SVGCircleElement, { id: string; link: BoardLink; end: "source" | "target"; weight: number }>(
-        "circle"
-      )
-      .data(
-        localLinks.flatMap((link) => [
-          { id: `${link.id}-source`, link, end: "source" as const, weight: link.weight },
-          { id: `${link.id}-target`, link, end: "target" as const, weight: link.weight }
-        ]),
-        (d) => d.id
-      )
-      .join("circle")
-      .attr("class", "string-endpoint")
-      .attr("r", (d) => 2.8 + d.weight * 2.8);
-
-    const nodeSelection = nodeLayer
-      .selectAll<SVGGElement, BoardNode>("g")
-      .data(localNodes, (d) => d.id)
-      .join("g")
-      .attr("class", (d) => `board-node ${d.kind} ${d.id === selectedEvidenceId ? "selected" : ""}`)
-      .style("cursor", "grab")
-      .on("click", (_, d) => {
-        if (d.kind === "evidence") {
-          onSelectEvidence(d.id);
-        }
-      });
-
-    nodeSelection
-      .filter((d) => d.kind === "case")
-      .append("circle")
-      .attr("r", (d) => 40 + d.credibility / 12)
-      .attr("class", "case-aura");
-
-    nodeSelection
-      .filter((d) => d.kind === "case")
-      .append("circle")
-      .attr("r", (d) => 22 + d.credibility / 14)
-      .attr("class", "case-core");
-
-    nodeSelection
-      .filter((d) => d.kind === "case")
-      .append("text")
-      .attr("class", "case-label")
-      .attr("text-anchor", "middle")
-      .attr("dy", 58)
-      .text((d) => d.label);
-
-    const evidenceNodes = nodeSelection.filter((d) => d.kind === "evidence");
-    evidenceNodes
-      .append("rect")
-      .attr("x", -72)
-      .attr("y", -51)
-      .attr("width", 144)
-      .attr("height", 102)
-      .attr("rx", 4)
-      .attr("class", "evidence-card-svg");
-
-    evidenceNodes
-      .append("circle")
-      .attr("r", 10)
-      .attr("cy", -52)
-      .attr("class", "node-pin");
-
-    evidenceNodes
-      .append("text")
-      .attr("class", "platform-label")
-      .attr("x", -60)
-      .attr("y", -28)
-      .text((d) => `${d.platform ?? "web"} / ${d.archiveStatus ?? "link"}`);
-
-    evidenceNodes
-      .append("text")
-      .attr("class", "evidence-label")
-      .attr("x", -60)
-      .attr("y", -4)
-      .text((d) => d.label.slice(0, 28));
-
-    evidenceNodes
-      .append("text")
-      .attr("class", "evidence-label secondary")
-      .attr("x", -60)
-      .attr("y", 13)
-      .text((d) => (d.label.length > 28 ? d.label.slice(28, 52) : ""));
-
-    evidenceNodes
-      .append("text")
-      .attr("class", "cred-label")
-      .attr("x", -60)
-      .attr("y", 36)
-      .text((d) => `${Math.round(d.credibility)}/100 credibility`);
-
-    evidenceNodes
-      .append("text")
-      .attr("class", "link-count-label")
-      .attr("x", 10)
-      .attr("y", 36)
-      .text((d) => `${d.linkedCount} case${d.linkedCount === 1 ? "" : "s"}`);
-
-    const simulation = d3
-      .forceSimulation<BoardNode>(localNodes)
-      .force(
-        "link",
-        d3
-          .forceLink<BoardNode, BoardLink>(localLinks)
-          .id((d) => d.id)
-          .distance((d) => 185 - d.weight * 48)
-          .strength((d) => 0.14 + d.weight * 0.32)
-      )
-      .force("charge", d3.forceManyBody().strength(-520))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide<BoardNode>().radius((d) => (d.kind === "case" ? 86 : 94)))
-      .alpha(0.92);
-
-    function dragstarted(event: d3.D3DragEvent<SVGGElement, BoardNode, BoardNode>) {
-      if (!event.active) {
-        simulation.alphaTarget(0.25).restart();
-      }
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    }
-
-    function dragged(event: d3.D3DragEvent<SVGGElement, BoardNode, BoardNode>) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-
-    function dragended(event: d3.D3DragEvent<SVGGElement, BoardNode, BoardNode>) {
-      if (!event.active) {
-        simulation.alphaTarget(0);
-      }
-      event.subject.fx = null;
-      event.subject.fy = null;
-    }
-
-    nodeSelection.call(
-      d3
-        .drag<SVGGElement, BoardNode>()
-        .on("start", dragstarted)
-        .on("drag", dragged)
-        .on("end", dragended)
-    );
-
-    svg.call(
-      d3
-        .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.45, 2.3])
-        .on("zoom", (event) => {
-          zoomLayer.attr("transform", event.transform.toString());
-        })
-    );
-
-    simulation.on("tick", () => {
-      linkSelection.attr("d", (d) => {
-        const source = d.source as BoardNode;
-        const target = d.target as BoardNode;
-        const sx = source.x ?? width / 2;
-        const sy = source.y ?? height / 2;
-        const tx = target.x ?? width / 2;
-        const ty = target.y ?? height / 2;
-        const dx = tx - sx;
-        const dy = ty - sy;
-        const curve = Math.sqrt(dx * dx + dy * dy) * 0.22;
-        return `M${sx},${sy} C${sx + dx * 0.48},${sy - curve} ${tx - dx * 0.48},${ty + curve} ${tx},${ty}`;
-      });
-
-      endpointSelection
-        .attr("cx", (d) => ((d.link[d.end] as BoardNode).x ?? width / 2))
-        .attr("cy", (d) => ((d.link[d.end] as BoardNode).y ?? height / 2));
-
-      nodeSelection.attr("transform", (d) => `translate(${d.x ?? width / 2},${d.y ?? height / 2})`);
-    });
-
-    return () => {
-      simulation.stop();
-    };
-  }, [links, nodes, onSelectEvidence, selectedEvidenceId, size.height, size.width]);
+  function endPointer() {
+    setDrag(null);
+  }
 
   return (
-    <div className="board-wrap" ref={wrapRef}>
-      <svg ref={svgRef} className="red-string-board" role="img" aria-label="Interactive red string evidence board" />
+    <div className="board-wrap">
+      <div className="board-toolbar" aria-label="Board tools">
+        <button onClick={() => setZoom((value) => Math.max(0.55, value - 0.08))} title="Zoom out">
+          <ZoomOut size={14} />
+        </button>
+        <span>{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom((value) => Math.min(1.35, value + 0.08))} title="Zoom in">
+          <ZoomIn size={14} />
+        </button>
+      </div>
+
+      <div
+        className="board-pan-surface"
+        onPointerDown={beginPan}
+        onPointerMove={movePointer}
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
+      >
+        <div
+          className="board-world"
+          style={{
+            width: BOARD_WIDTH,
+            height: BOARD_HEIGHT,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+          }}
+        >
+          <svg className="board-strings" viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`} aria-hidden="true">
+            <defs>
+              <filter id="subtle-red-glow">
+                <feGaussianBlur stdDeviation="2.5" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            {ghostArtifacts.slice(1).map((artifact, index) => (
+              <path
+                key={artifact.label}
+                className="ghost-string"
+                d={pathFor(ghostArtifacts[0], artifact, index)}
+              />
+            ))}
+            {boardStrings.map((string, index) => {
+              const source = nodeMap.get(string.source);
+              const target = nodeMap.get(string.target);
+              if (!source || !target) {
+                return null;
+              }
+              const selected = string.source === selectedEvidenceId || string.target === selectedEvidenceId;
+              return (
+                <g key={string.id}>
+                  <path
+                    className={`red-string ${string.type} ${selected ? "selected-string" : ""}`}
+                    d={pathFor(source, target, index)}
+                    strokeWidth={1 + string.weight * 3.4}
+                    opacity={selected ? 0.94 : 0.35 + string.weight * 0.38}
+                    filter={selected || string.weight > 0.7 ? "url(#subtle-red-glow)" : undefined}
+                  />
+                  <circle className="string-endpoint" cx={source.x} cy={source.y} r={2.8 + string.weight * 2.4} />
+                  <circle className="string-endpoint" cx={target.x} cy={target.y} r={2.8 + string.weight * 2.4} />
+                </g>
+              );
+            })}
+          </svg>
+
+          {ghostArtifacts.map((artifact) => (
+            <div
+              key={artifact.label}
+              className="ghost-artifact ghost-artifact-html"
+              style={{ left: artifact.x, top: artifact.y, transform: `translate(-50%, -50%) rotate(${artifact.rotate}deg)` }}
+            >
+              <span className="pin ghost-pin" />
+              {artifact.label}
+            </div>
+          ))}
+
+          {conspiracies.map((item) => {
+            const node = nodeMap.get(item.id);
+            if (!node) {
+              return null;
+            }
+            return (
+              <button
+                key={item.id}
+                className="case-anchor"
+                style={{ left: node.x, top: node.y }}
+                onPointerDown={(event) => beginNodeDrag(event, item.id)}
+                onClick={(event) => event.preventDefault()}
+              >
+                <span className="case-orbit" />
+                <strong>{shortTitle(item.title, 28)}</strong>
+                <em>{item.credibility_avg}/100 / {item.evidence_count} records</em>
+              </button>
+            );
+          })}
+
+          {evidences.map((item) => {
+            const node = nodeMap.get(item.id);
+            if (!node) {
+              return null;
+            }
+            const isSelected = item.id === selectedEvidenceId;
+            return (
+              <article
+                key={item.id}
+                className={`board-note ${isSelected ? "selected" : ""}`}
+                style={{ left: node.x, top: node.y, transform: `translate(-50%, -50%) rotate(${node.rotate ?? 0}deg)` }}
+                onPointerDown={(event) => beginNodeDrag(event, item.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectEvidence(item.id);
+                }}
+              >
+                <span className="pin" />
+                <div className="note-type">{item.platform} / {item.type}</div>
+                <h3>{shortTitle(item.title)}</h3>
+                <p>{shortTitle(item.content_text, 68)}</p>
+                <div className="note-meta">
+                  <span>{item.credibility_score}/100</span>
+                  <span>{item.linked_conspiracy_ids.length} case{item.linked_conspiracy_ids.length === 1 ? "" : "s"}</span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="board-hud">
-        <span>{evidences.length} evidence nodes</span>
+        <span>{evidences.length} evidence records</span>
         <span>{connections.length} saved strings</span>
         <span>{conspiracies.length} case clusters</span>
       </div>

@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
-import { Archive, Bot, ClipboardCheck, FolderKanban, Network, Search } from "lucide-react";
+import {
+  Archive,
+  Bot,
+  ClipboardCheck,
+  FolderKanban,
+  LogIn,
+  LogOut,
+  Network,
+  Search,
+  ShieldCheck
+} from "lucide-react";
 import { AdminMonitor } from "@/components/AdminMonitor";
 import { AnimatePresence, motion } from "framer-motion";
 import { AuthGate } from "@/components/AuthGate";
@@ -44,8 +54,15 @@ function iso(value: unknown) {
 export function AppShell() {
   return (
     <AuthGate>
-      {({ user, isAdminHint }) => (
-        <AuthenticatedApp userEmail={user.email ?? "unknown"} isAdminHint={isAdminHint} />
+      {({ user, isAdminHint, authLoading, authError, signIn, signOut }) => (
+        <AuthenticatedApp
+          userEmail={user?.email ?? null}
+          isAdminHint={isAdminHint}
+          authLoading={authLoading}
+          authError={authError}
+          signIn={signIn}
+          signOut={signOut}
+        />
       )}
     </AuthGate>
   );
@@ -53,10 +70,18 @@ export function AppShell() {
 
 function AuthenticatedApp({
   userEmail,
-  isAdminHint
+  isAdminHint,
+  authLoading,
+  authError,
+  signIn,
+  signOut
 }: {
-  userEmail: string;
+  userEmail: string | null;
   isAdminHint: boolean;
+  authLoading: boolean;
+  authError: string | null;
+  signIn: () => Promise<void>;
+  signOut: () => Promise<void>;
 }) {
   const [activeView, setActiveView] = useState<ViewKey>("web");
   const [searchTerm, setSearchTerm] = useState("");
@@ -172,41 +197,52 @@ function AuthenticatedApp({
     [evidences, filteredEvidence, selectedEvidenceId]
   );
 
-  const boardEvidence = useMemo(
-    () => filteredEvidence.filter((evidence) => (evidence.review_status ?? "approved") === "approved"),
-    [filteredEvidence]
-  );
+  const boardEvidence = filteredEvidence;
+
+  const shouldShowDetail = activeView === "web" || activeView === "case-files";
 
   return (
     <main className="app-frame">
       <header className="app-header">
-        <div className="brand-lockup">
-          <span className="brand-mark">RS</span>
-          <div>
-            <p>The</p>
-            <h1>Red String Project</h1>
+        <div className="app-command-row">
+          <div className="brand-lockup">
+            <span className="brand-mark">RS</span>
+            <div>
+              <p>The</p>
+              <h1>Red String Project</h1>
+            </div>
+          </div>
+
+          <div className="header-search">
+            <Search size={15} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search evidence, entities, tags"
+            />
+          </div>
+
+          <div className="header-meta">
+            <span className={`status-dot ${dataStatus}`} />
+            <span>{dataStatus === "live" ? "Connected" : dataStatus === "error" ? "Demo fallback" : "Demo records"}</span>
+            <span className="role-chip" title={userEmail ?? "Public visitor"}>
+              <ShieldCheck size={12} />
+              {isAdminHint ? "Admin" : userEmail ? "Signed in" : "Public"}
+            </span>
+            {userEmail ? (
+              <button className="header-icon-button" onClick={() => void signOut()} title="Sign out">
+                <LogOut size={15} />
+              </button>
+            ) : (
+              <button className="header-auth-button" onClick={() => void signIn()} disabled={authLoading}>
+                <LogIn size={15} />
+                Admin sign in
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="header-search">
-          <Search size={16} />
-          <input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search evidence, entities, tags"
-          />
-        </div>
-
-        <div className="header-meta">
-          <span className={`status-dot ${dataStatus}`} />
-          <span>{dataStatus === "live" ? "Connected" : dataStatus === "error" ? "Using demo records" : "Demo records"}</span>
-          <span className="role-chip" title={userEmail}>
-            {isAdminHint ? "Admin" : "Read only"}
-          </span>
-        </div>
-      </header>
-
-      <nav className="app-nav">
+        <nav className="app-nav">
         {views.map((view) => {
           const Icon = view.icon;
           return (
@@ -220,13 +256,15 @@ function AuthenticatedApp({
             </button>
           );
         })}
-      </nav>
+        </nav>
+      </header>
 
       <div className="disclaimer-strip">
         Exploratory pattern board. Evidence scores explain source quality and connection strength; they are not proof that a claim is true.
+        {authError ? <span className="auth-inline-error"> {authError}</span> : null}
       </div>
 
-      <section className="workspace">
+      <section className={`workspace ${shouldShowDetail ? "" : "workspace-wide"}`}>
         <aside className="filter-rail">
           <label>
             <span>Credibility</span>
@@ -242,15 +280,15 @@ function AuthenticatedApp({
           <div className="stat-stack">
             <p>
               <span>{boardEvidence.length}</span>
-              board evidence
+              records
             </p>
             <p>
               <span>{connections.length}</span>
-                strings
+              strings
             </p>
             <p>
               <span>{conspiracies.length}</span>
-                cases
+              cases
             </p>
           </div>
         </aside>
@@ -313,14 +351,18 @@ function AuthenticatedApp({
           </motion.div>
         </AnimatePresence>
 
-        <aside className="detail-panel">
-          <EvidenceDetail evidence={selectedEvidence} />
-        </aside>
+        {shouldShowDetail ? (
+          <aside className="detail-panel">
+            <EvidenceDetail evidence={selectedEvidence} />
+          </aside>
+        ) : null}
       </section>
 
-      <button className="mobile-detail-button" onClick={() => setMobileDetailOpen(true)}>
-        Selected evidence
-      </button>
+      {shouldShowDetail ? (
+        <button className="mobile-detail-button" onClick={() => setMobileDetailOpen(true)}>
+          Evidence
+        </button>
+      ) : null}
       {mobileDetailOpen ? (
         <div className="mobile-detail-sheet">
           <EvidenceDetail evidence={selectedEvidence} onClose={() => setMobileDetailOpen(false)} />
