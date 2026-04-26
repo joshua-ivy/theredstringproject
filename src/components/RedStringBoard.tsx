@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ZoomIn, ZoomOut } from "lucide-react";
+import { Plus, ZoomIn, ZoomOut } from "lucide-react";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 interface RedStringBoardProps {
@@ -33,28 +33,31 @@ interface BoardString {
 const BOARD_WIDTH = 1400;
 const BOARD_HEIGHT = 800;
 
-const evidenceSlots = [
-  { x: 214, y: 172, rotate: -3 },
-  { x: 456, y: 154, rotate: 2 },
-  { x: 712, y: 182, rotate: -2 },
-  { x: 1004, y: 164, rotate: 3 },
-  { x: 302, y: 394, rotate: 2 },
-  { x: 566, y: 442, rotate: -3 },
-  { x: 850, y: 426, rotate: 1 },
-  { x: 1142, y: 392, rotate: -2 },
-  { x: 252, y: 628, rotate: -2 },
-  { x: 520, y: 640, rotate: 3 },
-  { x: 798, y: 646, rotate: -1 },
-  { x: 1084, y: 624, rotate: 2 }
+const evidenceSlotById: Record<string, { x: number; y: number; rotate: number }> = {
+  "evidence-church-hearings": { x: 540, y: 230, rotate: -4 },
+  "evidence-national-archives": { x: 290, y: 285, rotate: 2 },
+  "evidence-uap-testimony": { x: 580, y: 540, rotate: -1 },
+  "evidence-declassified-memo": { x: 870, y: 200, rotate: 3 },
+  "evidence-social-claim": { x: 950, y: 470, rotate: -2 },
+  "evidence-rss-news": { x: 220, y: 460, rotate: -2 }
+};
+
+const fallbackEvidenceSlots = [
+  { x: 540, y: 230, rotate: -4 },
+  { x: 290, y: 285, rotate: 2 },
+  { x: 580, y: 540, rotate: -1 },
+  { x: 870, y: 200, rotate: 3 },
+  { x: 950, y: 470, rotate: -2 },
+  { x: 220, y: 460, rotate: -2 },
+  { x: 1110, y: 310, rotate: 2 },
+  { x: 720, y: 650, rotate: -3 }
 ];
 
-const caseSlots = [
-  { x: 407, y: 338 },
-  { x: 738, y: 374 },
-  { x: 1058, y: 520 },
-  { x: 620, y: 586 },
-  { x: 936, y: 276 }
-];
+const caseSlotById: Record<string, { x: number; y: number }> = {
+  "case-mkultra": { x: 410, y: 360 },
+  "case-uap": { x: 760, y: 380 },
+  "case-election-media": { x: 1080, y: 600 }
+};
 
 const ghostArtifacts = [
   { x: 126, y: 314, rotate: -7, label: "RS-011 / unresolved" },
@@ -79,8 +82,8 @@ export function RedStringBoard({
   selectedEvidenceId,
   onSelectEvidence
 }: RedStringBoardProps) {
-  const [zoom, setZoom] = useState(0.92);
-  const [pan, setPan] = useState({ x: -32, y: 24 });
+  const [zoom, setZoom] = useState(0.78);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
   const [drag, setDrag] = useState<
     | { mode: "pan"; startX: number; startY: number; originX: number; originY: number }
@@ -92,25 +95,24 @@ export function RedStringBoard({
     const nodes: BoardNode[] = [];
 
     conspiracies.forEach((item, index) => {
-      const slot = caseSlots[index % caseSlots.length];
+      const slot = caseSlotById[item.id] ?? { x: 410 + index * 240, y: 360 + (index % 2) * 110 };
       nodes.push({
         id: item.id,
         kind: "case",
-        x: slot.x + Math.floor(index / caseSlots.length) * 54,
-        y: slot.y + Math.floor(index / caseSlots.length) * 42
+        x: slot.x,
+        y: slot.y
       });
     });
 
     evidences.forEach((item, index) => {
-      const slot = evidenceSlots[index % evidenceSlots.length];
-      const ring = Math.floor(index / evidenceSlots.length);
-      const drift = ring * 52;
+      const slot = evidenceSlotById[item.id] ?? fallbackEvidenceSlots[index % fallbackEvidenceSlots.length];
+      const ring = Math.floor(index / fallbackEvidenceSlots.length);
       nodes.push({
         id: item.id,
         kind: "evidence",
-        x: Math.min(1240, slot.x + drift),
-        y: Math.min(700, slot.y + drift * 0.6),
-        rotate: slot.rotate + (hashNumber(item.id) % 5) - 2
+        x: Math.min(1240, slot.x + ring * 48),
+        y: Math.min(700, slot.y + ring * 36),
+        rotate: slot.rotate + (hashNumber(item.id) % 3) - 1
       });
     });
 
@@ -155,10 +157,10 @@ export function RedStringBoard({
   function pathFor(source: { x: number; y: number }, target: { x: number; y: number }, index: number) {
     const dx = target.x - source.x;
     const dy = target.y - source.y;
-    const bend = (index % 2 === 0 ? 1 : -1) * Math.min(92, Math.sqrt(dx * dx + dy * dy) * 0.18);
-    const cx = source.x + dx * 0.5 - dy * 0.08;
-    const cy = source.y + dy * 0.5 + bend;
-    return `M ${source.x} ${source.y} Q ${cx} ${cy} ${target.x} ${target.y}`;
+    const sag = 30 + Math.abs(dx + dy) * 0.04 + (index % 2) * 8;
+    const mx = (source.x + target.x) / 2;
+    const my = (source.y + target.y) / 2 + sag;
+    return `M ${source.x} ${source.y} Q ${mx} ${my} ${target.x} ${target.y}`;
   }
 
   function beginPan(event: React.PointerEvent<HTMLDivElement>) {
@@ -209,11 +211,11 @@ export function RedStringBoard({
   return (
     <div className="board-wrap">
       <div className="board-toolbar" aria-label="Board tools">
-        <button onClick={() => setZoom((value) => Math.max(0.55, value - 0.08))} title="Zoom out">
+        <button onClick={() => setZoom((value) => Math.max(0.3, value - 0.1))} title="Zoom out">
           <ZoomOut size={14} />
         </button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((value) => Math.min(1.35, value + 0.08))} title="Zoom in">
+        <button onClick={() => setZoom((value) => Math.min(1.6, value + 0.1))} title="Zoom in">
           <ZoomIn size={14} />
         </button>
       </div>
@@ -293,7 +295,7 @@ export function RedStringBoard({
               <button
                 key={item.id}
                 className="case-anchor"
-                style={{ left: node.x, top: node.y }}
+                style={{ left: node.x - 90, top: node.y - 50 }}
                 onPointerDown={(event) => beginNodeDrag(event, item.id)}
                 onClick={(event) => event.preventDefault()}
               >
@@ -314,7 +316,7 @@ export function RedStringBoard({
               <article
                 key={item.id}
                 className={`board-note ${isSelected ? "selected" : ""}`}
-                style={{ left: node.x, top: node.y, transform: `translate(-50%, -50%) rotate(${node.rotate ?? 0}deg)` }}
+                style={{ left: node.x - 85, top: node.y - 30, transform: `rotate(${node.rotate ?? 0}deg)` }}
                 onPointerDown={(event) => beginNodeDrag(event, item.id)}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -337,8 +339,14 @@ export function RedStringBoard({
 
       <div className="board-hud">
         <span>{evidences.length} evidence records</span>
+        <span>/</span>
         <span>{connections.length} saved strings</span>
+        <span>/</span>
         <span>{conspiracies.length} case clusters</span>
+      </div>
+      <div className="board-help-corner">
+        <button><Plus size={12} /> Pin evidence</button>
+        <button>New string</button>
       </div>
     </div>
   );

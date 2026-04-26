@@ -8,13 +8,53 @@ interface EvidenceDetailProps {
   onClose?: () => void;
 }
 
+function scoreTone(value: number, inverse = false) {
+  if (inverse) {
+    if (value < 15) return "var(--green)";
+    if (value < 35) return "var(--amber)";
+    return "var(--red)";
+  }
+  if (value > 75) return "var(--green)";
+  if (value > 50) return "var(--amber)";
+  return "var(--red)";
+}
+
+function ScoreRow({ label, value, inverse = false }: { label: string; value: number; inverse?: boolean }) {
+  const color = scoreTone(value, inverse);
+  return (
+    <div className="score-row">
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <i>
+        <b style={{ width: `${value}%`, background: color, boxShadow: `0 0 6px ${color}` }} />
+      </i>
+    </div>
+  );
+}
+
 export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
   const primaryAsset = evidence?.archived_assets.find((asset) => asset.url) ?? evidence?.archived_assets[0] ?? null;
   const hashPreview = evidence?.content_hash ? `${evidence.content_hash.slice(0, 12)}...` : "none";
   const sourceLabel = evidence
-    ? `${evidence.platform} source - ${evidence.archive_status.replace(/_/g, " ")}`
+    ? `${evidence.platform} - ${evidence.type} - ${evidence.archive_status.replace(/_/g, " ")}`
     : "No source selected";
   const signalLabels = evidence ? Array.from(new Set([...evidence.entities, ...evidence.tags])).slice(0, 10) : [];
+  const provenance = evidence
+    ? evidence.credibility_breakdown?.source_trust ??
+      evidence.credibility_breakdown?.provenance ??
+      Math.min(100, evidence.credibility_score + (evidence.archive_status === "archived" ? 8 : 2))
+    : 0;
+  const corroboration = evidence
+    ? evidence.credibility_breakdown?.cross_verification ??
+      evidence.credibility_breakdown?.corroboration ??
+      Math.min(100, evidence.credibility_score - 8 + evidence.linked_conspiracy_ids.length * 8)
+    : 0;
+  const manipulation = evidence
+    ? evidence.credibility_breakdown?.manipulation_signals ??
+      Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12))
+    : 0;
 
   return (
     <>
@@ -45,6 +85,13 @@ export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
               <span style={{ width: `${evidence.credibility_score}%` }} />
             </div>
             <p>{evidence.credibility_explanation}</p>
+          </section>
+
+          <section className="score-breakdown">
+            <h3>Score Breakdown</h3>
+            <ScoreRow label="Provenance" value={Math.round(provenance)} />
+            <ScoreRow label="Corroboration" value={Math.round(corroboration)} />
+            <ScoreRow label="Manipulation risk" value={Math.round(manipulation)} inverse />
           </section>
 
           <section className="detail-section">

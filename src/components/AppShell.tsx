@@ -224,7 +224,7 @@ function AuthenticatedApp({
 
           <div className="header-meta">
             <span className={`status-dot ${dataStatus}`} />
-            <span>{dataStatus === "live" ? "Connected" : dataStatus === "error" ? "Demo fallback" : "Demo records"}</span>
+            <span>{dataStatus === "error" ? "Demo fallback" : "Connected"}</span>
             <span className="role-chip" title={userEmail ?? "Public visitor"}>
               <ShieldCheck size={12} />
               {isAdminHint ? "Admin" : userEmail ? "Signed in" : "Public"}
@@ -236,7 +236,7 @@ function AuthenticatedApp({
             ) : (
               <button className="header-auth-button" onClick={() => void signIn()} disabled={authLoading}>
                 <LogIn size={15} />
-                Admin sign in
+                Admin
               </button>
             )}
           </div>

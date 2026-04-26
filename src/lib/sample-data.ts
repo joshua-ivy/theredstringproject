@@ -79,6 +79,27 @@ export const sampleEvidence: Evidence[] = [
     review_status: "approved"
   },
   {
+    id: "evidence-national-archives",
+    title: "National Archives MKUltra collection",
+    type: "pdf",
+    platform: "archive",
+    source_url: "https://www.archives.gov/",
+    canonical_url: "https://www.archives.gov/",
+    content_text: "Public archive reference point for declassified records and source trails related to MKUltra claims.",
+    credibility_score: 74,
+    credibility_explanation: "Stable archival provenance with useful source trails. It supports document discovery, but individual claims still need exact record matching.",
+    entities: ["NARA", "MKUltra", "CIA"],
+    tags: ["archives", "declassified"],
+    archive_status: "link_only",
+    archived_assets: [],
+    content_hash: "sample-06",
+    linked_conspiracy_ids: ["case-mkultra"],
+    retrieved_at: now,
+    created_at: now,
+    analysis_status: "complete",
+    review_status: "approved"
+  },
+  {
     id: "evidence-uap-testimony",
     title: "Public UAP testimony clip",
     type: "video",
@@ -155,6 +176,15 @@ export const sampleConnections: Connection[] = [
   },
   {
     id: "conn-02",
+    from: "evidence-national-archives",
+    to: "case-mkultra",
+    type: "supports",
+    weight: 0.78,
+    ai_reason: "The archive collection is a stable source trail for MKUltra-related records.",
+    created_at: now
+  },
+  {
+    id: "conn-03",
     from: "evidence-declassified-memo",
     to: "case-mkultra",
     type: "correlates",
@@ -163,7 +193,7 @@ export const sampleConnections: Connection[] = [
     created_at: now
   },
   {
-    id: "conn-03",
+    id: "conn-04",
     from: "evidence-uap-testimony",
     to: "case-uap",
     type: "supports",
@@ -172,7 +202,7 @@ export const sampleConnections: Connection[] = [
     created_at: now
   },
   {
-    id: "conn-04",
+    id: "conn-05",
     from: "evidence-social-claim",
     to: "case-election-media",
     type: "contradicts",
@@ -181,7 +211,7 @@ export const sampleConnections: Connection[] = [
     created_at: now
   },
   {
-    id: "conn-05",
+    id: "conn-06",
     from: "evidence-rss-news",
     to: "case-mkultra",
     type: "correlates",
@@ -190,7 +220,7 @@ export const sampleConnections: Connection[] = [
     created_at: now
   },
   {
-    id: "conn-06",
+    id: "conn-07",
     from: "evidence-rss-news",
     to: "case-uap",
     type: "correlates",
