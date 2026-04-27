@@ -1193,8 +1193,7 @@ input[type="range"] {
   pointer-events: none;
 }
 
-.red-string,
-.ghost-string {
+.red-string {
   fill: none;
   stroke-linecap: round;
 }
@@ -1212,12 +1211,6 @@ input[type="range"] {
   stroke-width: 3.4;
 }
 
-.ghost-string {
-  stroke: oklch(0.62 0.24 25 / 0.14);
-  stroke-width: 1;
-  stroke-dasharray: 3 11;
-}
-
 @keyframes string-flow {
   to {
     stroke-dashoffset: -52;
@@ -1228,32 +1221,6 @@ input[type="range"] {
   fill: var(--red);
   stroke: var(--bg-0);
   stroke-width: 1.5;
-}
-
-.ghost-artifact-html {
-  position: absolute;
-  width: 120px;
-  min-height: 58px;
-  padding: 20px 9px 9px;
-  color: oklch(0.96 0.018 82 / 0.25);
-  background: oklch(0.86 0.055 82 / 0.045);
-  border: 1px solid oklch(0.86 0.055 82 / 0.12);
-  border-radius: 4px;
-  font-family: var(--font-mono), monospace;
-  font-size: 0.58rem;
-  text-align: center;
-  text-transform: uppercase;
-  pointer-events: none;
-}
-
-.ghost-artifact-html .ghost-pin {
-  position: absolute;
-  top: -7px;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  opacity: 0.35;
-  transform: translateX(-50%);
 }
 
 .case-anchor {

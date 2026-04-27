@@ -34,8 +34,12 @@ interface BoardString {
   type: string;
 }
 
-const BOARD_WIDTH = 2600;
-const BOARD_HEIGHT = 1200;
+const BOARD_MIN_X = -900;
+const BOARD_MIN_Y = -220;
+const BOARD_MAX_X = 3200;
+const BOARD_MAX_Y = 1420;
+const BOARD_WIDTH = BOARD_MAX_X - BOARD_MIN_X;
+const BOARD_HEIGHT = BOARD_MAX_Y - BOARD_MIN_Y;
 
 const evidenceSlotById: Record<string, { x: number; y: number; rotate: number }> = {
   "evidence-church-hearings": { x: 540, y: 230, rotate: -4 },
@@ -66,16 +70,6 @@ const caseSlotById: Record<string, { x: number; y: number }> = {
   "case-uap": { x: 760, y: 380 },
   "case-election-media": { x: 1080, y: 600 }
 };
-
-const ghostArtifacts = [
-  { x: 126, y: 314, rotate: -7, label: "RS-011 / unresolved" },
-  { x: 1208, y: 222, rotate: 5, label: "source fragment" },
-  { x: 180, y: 706, rotate: 2, label: "retrieved 04.26" },
-  { x: 1200, y: 696, rotate: -4, label: "entity index" },
-  { x: 686, y: 92, rotate: -2, label: "hash verified" },
-  { x: 1660, y: 210, rotate: 4, label: "case overflow" },
-  { x: 2140, y: 830, rotate: -5, label: "unfiled source" }
-];
 
 function hashNumber(value: string) {
   return [...value].reduce((sum, char) => sum + char.charCodeAt(0), 0);
@@ -128,8 +122,8 @@ export function RedStringBoard({
       nodes.push({
         id: item.id,
         kind: "evidence",
-        x: Math.min(BOARD_WIDTH - 160, slot.x + ring * 96),
-        y: Math.min(BOARD_HEIGHT - 120, slot.y + ring * 64),
+        x: Math.min(BOARD_MAX_X - 160, slot.x + ring * 96),
+        y: Math.min(BOARD_MAX_Y - 120, slot.y + ring * 64),
         rotate: slot.rotate + (hashNumber(item.id) % 3) - 1
       });
     });
@@ -201,8 +195,8 @@ export function RedStringBoard({
 
   function clampedPosition(x: number, y: number) {
     return {
-      x: Math.max(80, Math.min(BOARD_WIDTH - 80, x)),
-      y: Math.max(80, Math.min(BOARD_HEIGHT - 80, y))
+      x: Math.max(BOARD_MIN_X + 80, Math.min(BOARD_MAX_X - 80, x)),
+      y: Math.max(BOARD_MIN_Y + 80, Math.min(BOARD_MAX_Y - 80, y))
     };
   }
 
@@ -331,7 +325,7 @@ export function RedStringBoard({
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
           }}
         >
-          <svg className="board-strings" viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`} aria-hidden="true">
+          <svg className="board-strings" viewBox={`${BOARD_MIN_X} ${BOARD_MIN_Y} ${BOARD_WIDTH} ${BOARD_HEIGHT}`} aria-hidden="true">
             <defs>
               <filter id="subtle-red-glow">
                 <feGaussianBlur stdDeviation="2.5" result="blur" />
@@ -341,13 +335,6 @@ export function RedStringBoard({
                 </feMerge>
               </filter>
             </defs>
-            {ghostArtifacts.slice(1).map((artifact, index) => (
-              <path
-                key={artifact.label}
-                className="ghost-string"
-                d={pathFor(ghostArtifacts[0], artifact, index)}
-              />
-            ))}
             {boardStrings.map((string, index) => {
               const source = nodeMap.get(string.source);
               const target = nodeMap.get(string.target);
@@ -370,17 +357,6 @@ export function RedStringBoard({
               );
             })}
           </svg>
-
-          {ghostArtifacts.map((artifact) => (
-            <div
-              key={artifact.label}
-              className="ghost-artifact ghost-artifact-html"
-              style={{ left: artifact.x, top: artifact.y, transform: `translate(-50%, -50%) rotate(${artifact.rotate}deg)` }}
-            >
-              <span className="pin ghost-pin" />
-              {artifact.label}
-            </div>
-          ))}
 
           {conspiracies.map((item) => {
             const node = nodeMap.get(item.id);
