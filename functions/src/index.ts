@@ -116,14 +116,6 @@ function evidenceTypeFromContent(contentType: string, rawUrl: string) {
   return "link";
 }
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || `case-${Date.now()}`;
-}
-
 async function fetchWithTimeout(url: string, timeoutMs = 18000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -675,54 +667,6 @@ function mergeEvidenceDocs(...groups: FirebaseFirestore.QueryDocumentSnapshot[])
   });
 }
 
-async function upsertCase(label: string, evidenceId: string, analysis: AnalysisResult, embedding: number[]) {
-  const id = `case-${slugify(label)}`;
-  const ref = db.collection("conspiracies").doc(id);
-  await db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(ref);
-    if (!snap.exists) {
-      transaction.set(ref, {
-        title: label,
-        summary: analysis.summary,
-        credibility_avg: analysis.credibility_score,
-        evidence_count: 1,
-        string_count: 1,
-        tags: analysis.tags.slice(0, 10),
-        thumbnail: null,
-        last_weaved: FieldValue.serverTimestamp(),
-        embedding
-      });
-      return;
-    }
-
-    const existing = snap.data() ?? {};
-    const evidenceCount = Number(existing.evidence_count ?? 0) + 1;
-    const previousAverage = Number(existing.credibility_avg ?? analysis.credibility_score);
-    transaction.update(ref, {
-      credibility_avg: Math.round(((previousAverage * (evidenceCount - 1)) + analysis.credibility_score) / evidenceCount),
-      evidence_count: evidenceCount,
-      string_count: Number(existing.string_count ?? 0) + 1,
-      tags: Array.from(new Set([...(existing.tags ?? []), ...analysis.tags])).slice(0, 20),
-      last_weaved: FieldValue.serverTimestamp()
-    });
-  });
-
-  await db.collection("connections").doc(`${evidenceId}-${id}`).set(
-    {
-      from: evidenceId,
-      to: id,
-      type: "correlates",
-      weight: Math.max(0.2, Math.min(1, analysis.credibility_score / 100)),
-      ai_reason: `Evidence analysis identified "${label}" as a related case/entity.`,
-      created_at: FieldValue.serverTimestamp(),
-      updated_at: FieldValue.serverTimestamp()
-    },
-    { merge: true }
-  );
-
-  return id;
-}
-
 export const submitEvidenceUrl = onCall({ region: "us-central1" }, async (request) => {
   requireAdmin(request);
   const input = submitUrlSchema.safeParse(request.data);
@@ -1045,15 +989,9 @@ export const analyzeEvidenceTask = onTaskDispatched(
       const apiKey = GEMINI_API_KEY.value();
       const analysis = await runGeminiAnalysis(record, apiKey);
       const embedding = await embedText(`${analysis.title}\n${analysis.summary}\n${record.content_text ?? ""}`, apiKey);
-
-      const linkedCaseIds: string[] = [];
-      for (const connection of analysis.suggested_connections.slice(0, 5)) {
-        linkedCaseIds.push(await upsertCase(connection.label, evidenceId, analysis, embedding));
-      }
-
-      if (linkedCaseIds.length === 0 && analysis.entities[0]) {
-        linkedCaseIds.push(await upsertCase(analysis.entities[0], evidenceId, analysis, embedding));
-      }
+      const existingLinkedCaseIds = Array.isArray(record.linked_conspiracy_ids)
+        ? record.linked_conspiracy_ids.map(String).filter(Boolean)
+        : [];
 
       const similar = await findSimilarEvidence(evidenceId, embedding);
       await Promise.all(
@@ -1082,7 +1020,8 @@ export const analyzeEvidenceTask = onTaskDispatched(
         manipulation_flags: analysis.manipulation_flags,
         entities: analysis.entities,
         tags: Array.from(new Set([...(record.tags ?? []), ...analysis.tags])),
-        linked_conspiracy_ids: Array.from(new Set(linkedCaseIds)),
+        linked_conspiracy_ids: Array.from(new Set(existingLinkedCaseIds)),
+        suggested_connections: analysis.suggested_connections,
         embedding,
         analysis_status: "complete",
         updated_at: FieldValue.serverTimestamp()
