@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytesResumable } from "firebase/storage";
 import { ExternalLink, FileUp, Loader2, Plus, Send, Trash2, Upload } from "lucide-react";
@@ -23,6 +23,22 @@ interface EvidenceLockerProps {
 
 type FilterKey = "all" | "approved" | "review";
 type LockerSort = "credibility" | "newest" | "risk";
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function splitTags(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 12);
+}
 
 function manipulationScore(evidence: Evidence) {
   return Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12));
@@ -81,8 +97,9 @@ export function EvidenceLocker({
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(currentProjectId);
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(currentCaseId);
+  const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId ?? projects[0]?.id ?? "");
+  const [selectedCaseId, setSelectedCaseId] = useState(currentCaseId ?? "");
+  const [newCaseTitle, setNewCaseTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -119,17 +136,58 @@ export function EvidenceLocker({
   const flaggedCount = evidences.filter((evidence) => manipulationScore(evidence) > 30).length;
   const activeProjectId = selectedProjectId && projects.some((project) => project.id === selectedProjectId)
     ? selectedProjectId
-    : currentProjectId && projects.some((project) => project.id === currentProjectId)
-      ? currentProjectId
-      : projects[0]?.id ?? "";
+    : "";
   const projectCases = conspiracies.filter((item) => item.project_id === activeProjectId);
   const activeCaseId = selectedCaseId && projectCases.some((item) => item.id === selectedCaseId)
     ? selectedCaseId
-    : currentCaseId && projectCases.some((item) => item.id === currentCaseId)
-      ? currentCaseId
-      : "";
+    : "";
+
+  async function createIntakeCaseIfNeeded() {
+    if (activeCaseId) {
+      return activeCaseId;
+    }
+
+    const title = newCaseTitle.trim();
+    if (!title) {
+      return "";
+    }
+
+    if (!activeProjectId) {
+      throw new Error("Choose a project before creating a new case.");
+    }
+
+    const id = `case-${slugify(title) || crypto.randomUUID()}`;
+    await setDoc(
+      doc(db, "conspiracies", id),
+      {
+        project_id: activeProjectId,
+        title,
+        summary: "New case opened during evidence intake.",
+        credibility_avg: 0,
+        evidence_count: 0,
+        string_count: 0,
+        tags: splitTags(tags),
+        thumbnail: null,
+        last_weaved: serverTimestamp(),
+        embedding: []
+      },
+      { merge: true }
+    );
+    await setDoc(
+      doc(db, "projects", activeProjectId),
+      {
+        updated_at: serverTimestamp(),
+        last_weaved: serverTimestamp()
+      },
+      { merge: true }
+    );
+    setSelectedCaseId(id);
+    setNewCaseTitle("");
+    return id;
+  }
 
   async function assignEvidence(evidenceId: string) {
+    const caseId = await createIntakeCaseIfNeeded();
     if (activeProjectId) {
       await updateDoc(doc(db, "evidences", evidenceId), {
         project_id: activeProjectId,
@@ -137,18 +195,22 @@ export function EvidenceLocker({
       });
     }
 
-    if (activeCaseId) {
+    if (caseId) {
       const callable = httpsCallable<
         { evidenceId: string; caseId: string },
         { evidenceId: string; caseId: string; status: string }
       >(functions, "linkEvidenceToCase");
-      await callable({ evidenceId, caseId: activeCaseId });
+      await callable({ evidenceId, caseId });
     }
+
+    return caseId;
   }
 
-  function assignmentLabel() {
+  function assignmentLabel(caseId = activeCaseId) {
     const project = projects.find((item) => item.id === activeProjectId);
-    const evidenceCase = conspiracies.find((item) => item.id === activeCaseId);
+    const evidenceCase = conspiracies.find((item) => item.id === caseId) ?? (caseId && newCaseTitle.trim()
+      ? { title: newCaseTitle.trim() }
+      : null);
     if (project && evidenceCase) return `Filed under ${project.title} / ${evidenceCase.title}.`;
     if (project) return `Assigned to project ${project.title}. Choose a case later to place it on the board.`;
     return "Queued without project assignment.";
@@ -160,8 +222,8 @@ export function EvidenceLocker({
       return;
     }
 
-    if (!activeCaseId) {
-      setMessage("Choose a case before pinning evidence to the board.");
+    if (!activeCaseId && !newCaseTitle.trim()) {
+      setMessage("Choose an existing case or enter a new case name before pinning evidence.");
       return;
     }
 
@@ -177,8 +239,8 @@ export function EvidenceLocker({
     setAssigningId(evidence.id);
     setMessage(null);
     try {
-      await assignEvidence(evidence.id);
-      setMessage(`Pinned ${evidence.title}. ${assignmentLabel()}`);
+      const caseId = await assignEvidence(evidence.id);
+      setMessage(`Pinned ${evidence.title}. ${assignmentLabel(caseId)}`);
       if (returnToBoard) {
         onPinComplete?.();
         onSelect(evidence.id);
@@ -209,8 +271,8 @@ export function EvidenceLocker({
         ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
-      await assignEvidence(result.data.evidenceId);
-      setMessage(`Queued evidence ${result.data.evidenceId} (${result.data.status}). ${assignmentLabel()}`);
+      const caseId = await assignEvidence(result.data.evidenceId);
+      setMessage(`Queued evidence ${result.data.evidenceId} (${result.data.status}). ${assignmentLabel(caseId)}`);
       setUrl("");
       setNotes("");
       setTags("");
@@ -260,8 +322,8 @@ export function EvidenceLocker({
         ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
-      await assignEvidence(result.data.evidenceId);
-      setMessage(`Uploaded and queued evidence ${result.data.evidenceId}. ${assignmentLabel()}`);
+      const caseId = await assignEvidence(result.data.evidenceId);
+      setMessage(`Uploaded and queued evidence ${result.data.evidenceId}. ${assignmentLabel(caseId)}`);
       setFile(null);
       setUploadProgress(null);
     } catch (error) {
@@ -316,8 +378,9 @@ export function EvidenceLocker({
                 <select
                   value={activeProjectId}
                   onChange={(event) => {
-                    setSelectedProjectId(event.target.value || null);
-                    setSelectedCaseId(null);
+                    setSelectedProjectId(event.target.value);
+                    setSelectedCaseId("");
+                    setNewCaseTitle("");
                   }}
                 >
                   <option value="">No project</option>
@@ -330,7 +393,12 @@ export function EvidenceLocker({
                 Case
                 <select
                   value={activeCaseId}
-                  onChange={(event) => setSelectedCaseId(event.target.value || null)}
+                  onChange={(event) => {
+                    setSelectedCaseId(event.target.value);
+                    if (event.target.value) {
+                      setNewCaseTitle("");
+                    }
+                  }}
                   disabled={!activeProjectId || projectCases.length === 0}
                 >
                   <option value="">No case yet</option>
@@ -339,6 +407,16 @@ export function EvidenceLocker({
                   ))}
                 </select>
               </label>
+              {activeProjectId && !activeCaseId ? (
+                <label>
+                  New case name
+                  <input
+                    value={newCaseTitle}
+                    onChange={(event) => setNewCaseTitle(event.target.value)}
+                    placeholder="September 15, 2024 Trump interview"
+                  />
+                </label>
+              ) : null}
               <label>
                 Source URL
                 <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/evidence" type="url" />
@@ -472,8 +550,12 @@ export function EvidenceLocker({
                         event.stopPropagation();
                         void pinExistingEvidence(evidence, false);
                       }}
-                      disabled={!activeCaseId || assigningId === evidence.id || evidence.linked_conspiracy_ids.includes(activeCaseId)}
-                      title={activeCaseId ? "Pin evidence to selected case" : "Choose a case before pinning"}
+                      disabled={
+                        (!activeCaseId && !newCaseTitle.trim()) ||
+                        assigningId === evidence.id ||
+                        Boolean(activeCaseId && evidence.linked_conspiracy_ids.includes(activeCaseId))
+                      }
+                      title={activeCaseId || newCaseTitle.trim() ? "Pin evidence to selected case" : "Choose or name a case before pinning"}
                     >
                       {assigningId === evidence.id ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
                     </button>
