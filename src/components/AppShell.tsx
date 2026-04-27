@@ -352,6 +352,14 @@ function AuthenticatedApp({
                   await callable({ evidenceId, caseId });
                   setSelectedEvidenceId(evidenceId);
                 }}
+                onUnlinkEvidenceFromCase={async (evidenceId, caseId) => {
+                  const callable = httpsCallable<
+                    { evidenceId: string; caseId: string },
+                    { evidenceId: string; caseId: string; status: string }
+                  >(functions, "unlinkEvidenceFromCase");
+                  await callable({ evidenceId, caseId });
+                  setSelectedEvidenceId(evidenceId);
+                }}
                 onPinEvidence={() => {
                   setActiveView("evidence-locker");
                   setViewHash("evidence-locker");
@@ -414,7 +422,15 @@ function AuthenticatedApp({
           <aside className="detail-panel">
             <EvidenceDetail
               evidence={selectedEvidence}
+              conspiracies={conspiracies}
               isAdminHint={isAdminHint}
+              onUnlinkEvidenceFromCase={async (evidenceId, caseId) => {
+                const callable = httpsCallable<
+                  { evidenceId: string; caseId: string },
+                  { evidenceId: string; caseId: string; status: string }
+                >(functions, "unlinkEvidenceFromCase");
+                await callable({ evidenceId, caseId });
+              }}
               onDeleted={(id) => {
                 setEvidences((current) => current.filter((evidence) => evidence.id !== id));
                 setSelectedEvidenceId((current) => current === id ? null : current);
@@ -433,8 +449,16 @@ function AuthenticatedApp({
         <div className="mobile-detail-sheet">
           <EvidenceDetail
             evidence={selectedEvidence}
+            conspiracies={conspiracies}
             isAdminHint={isAdminHint}
             onClose={() => setMobileDetailOpen(false)}
+            onUnlinkEvidenceFromCase={async (evidenceId, caseId) => {
+              const callable = httpsCallable<
+                { evidenceId: string; caseId: string },
+                { evidenceId: string; caseId: string; status: string }
+              >(functions, "unlinkEvidenceFromCase");
+              await callable({ evidenceId, caseId });
+            }}
             onDeleted={(id) => {
               setEvidences((current) => current.filter((evidence) => evidence.id !== id));
               setSelectedEvidenceId((current) => current === id ? null : current);

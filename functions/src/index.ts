@@ -1367,6 +1367,40 @@ export const linkEvidenceToCase = onCall({ region: "us-central1" }, async (reque
   return { evidenceId, caseId, status: "linked" };
 });
 
+export const unlinkEvidenceFromCase = onCall({ region: "us-central1" }, async (request) => {
+  const unlinkedBy = requireAdmin(request);
+  const input = linkEvidenceSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence unlink request is invalid.", input.error.flatten());
+  }
+
+  const { evidenceId, caseId } = input.data;
+  const evidenceRef = db.collection("evidences").doc(evidenceId);
+  const caseRef = db.collection("conspiracies").doc(caseId);
+  const connectionRef = db.collection("connections").doc(`${evidenceId}-${caseId}`);
+
+  const [evidenceSnap, caseSnap] = await Promise.all([evidenceRef.get(), caseRef.get()]);
+  if (!evidenceSnap.exists) {
+    throw new HttpsError("not-found", "Evidence record was not found.");
+  }
+  if (!caseSnap.exists) {
+    throw new HttpsError("not-found", "Case file was not found.");
+  }
+
+  await Promise.all([
+    evidenceRef.update({
+      linked_conspiracy_ids: FieldValue.arrayRemove(caseId),
+      updated_at: FieldValue.serverTimestamp(),
+      unlinked_by: unlinkedBy,
+      unlinked_at: FieldValue.serverTimestamp()
+    }),
+    connectionRef.delete()
+  ]);
+  await recomputeCaseAggregate(caseId);
+
+  return { evidenceId, caseId, status: "unlinked" };
+});
+
 export const analyzeEvidenceTask = onTaskDispatched(
   {
     region: "us-central1",

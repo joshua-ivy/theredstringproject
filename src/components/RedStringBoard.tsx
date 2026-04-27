@@ -12,6 +12,7 @@ interface RedStringBoardProps {
   isAdminHint: boolean;
   onSelectEvidence: (id: string) => void;
   onLinkEvidenceToCase: (evidenceId: string, caseId: string) => Promise<void>;
+  onUnlinkEvidenceFromCase: (evidenceId: string, caseId: string) => Promise<void>;
   onPinEvidence: () => void;
   onNewString: () => void;
 }
@@ -87,6 +88,7 @@ export function RedStringBoard({
   isAdminHint,
   onSelectEvidence,
   onLinkEvidenceToCase,
+  onUnlinkEvidenceFromCase,
   onPinEvidence,
   onNewString
 }: RedStringBoardProps) {
@@ -248,6 +250,47 @@ export function RedStringBoard({
       activeDrag.originX + (event.clientX - activeDrag.startX) / zoom,
       activeDrag.originY + (event.clientY - activeDrag.startY) / zoom
     );
+
+    const draggedEvidence = draggedNode.kind === "evidence"
+      ? evidences.find((item) => item.id === draggedNode.id)
+      : null;
+
+    if (draggedEvidence?.linked_conspiracy_ids.length) {
+      const linkedCases = draggedEvidence.linked_conspiracy_ids
+        .map((caseId) => {
+          const node = nodeMap.get(caseId);
+          return node ? { id: caseId, node } : null;
+        })
+        .filter((item): item is { id: string; node: BoardNode } => Boolean(item));
+      const unlinkCandidate = linkedCases
+        .map((item) => ({
+          id: item.id,
+          startDistance: distance(item.node, { x: activeDrag.originX, y: activeDrag.originY }),
+          finalDistance: distance(item.node, finalPosition)
+        }))
+        .filter((item) => item.startDistance <= 220 && item.finalDistance >= 280)
+        .sort((a, b) => b.finalDistance - a.finalDistance)[0];
+
+      if (unlinkCandidate) {
+        const targetCase = conspiracies.find((item) => item.id === unlinkCandidate.id);
+        if (!isAdminHint) {
+          setBoardMessage("Sign in as admin to unlink evidence from a case.");
+          return;
+        }
+
+        setLinking(true);
+        setBoardMessage(`Removing ${draggedEvidence.title} from ${targetCase?.title ?? "case"}...`);
+        try {
+          await onUnlinkEvidenceFromCase(draggedEvidence.id, unlinkCandidate.id);
+          setBoardMessage(`Removed ${draggedEvidence.title} from ${targetCase?.title ?? "case"}.`);
+        } catch (error) {
+          setBoardMessage(error instanceof Error ? error.message : "Could not remove that case string.");
+        } finally {
+          setLinking(false);
+        }
+        return;
+      }
+    }
 
     const evidenceNode = draggedNode.kind === "evidence"
       ? { id: draggedNode.id, position: finalPosition }

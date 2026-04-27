@@ -4,15 +4,17 @@ import { FormEvent, useEffect, useState } from "react";
 import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytes } from "firebase/storage";
-import { Archive, Edit3, ExternalLink, Eye, Loader2, Save, Trash2, Upload, X } from "lucide-react";
+import { Archive, Edit3, ExternalLink, Eye, Loader2, Save, Trash2, Unlink, Upload, X } from "lucide-react";
 import { auth, db, functions, storage } from "@/lib/firebase";
-import type { Evidence } from "@/types/domain";
+import type { Conspiracy, Evidence } from "@/types/domain";
 
 interface EvidenceDetailProps {
   evidence: Evidence | null;
+  conspiracies?: Conspiracy[];
   isAdminHint?: boolean;
   onClose?: () => void;
   onDeleted?: (id: string) => void;
+  onUnlinkEvidenceFromCase?: (evidenceId: string, caseId: string) => Promise<void>;
 }
 
 function scoreTone(value: number, inverse = false) {
@@ -47,7 +49,14 @@ function formatRetrieved(value: string) {
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
-export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDeleted }: EvidenceDetailProps) {
+export function EvidenceDetail({
+  evidence,
+  conspiracies = [],
+  isAdminHint = false,
+  onClose,
+  onDeleted,
+  onUnlinkEvidenceFromCase
+}: EvidenceDetailProps) {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [reviewDraft, setReviewDraft] = useState({
     evidenceId: "",
@@ -63,6 +72,8 @@ export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDelet
   const [supplementMessage, setSupplementMessage] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [unlinkingCaseId, setUnlinkingCaseId] = useState<string | null>(null);
+  const [caseMessage, setCaseMessage] = useState<string | null>(null);
   const primaryAsset = evidence?.archived_assets.find((asset) => asset.url) ?? evidence?.archived_assets[0] ?? null;
   const hashPreview = evidence?.content_hash ? `${evidence.content_hash.slice(0, 12)}...` : "none";
   const sourceLabel = evidence
@@ -84,6 +95,18 @@ export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDelet
       evidence.credibility_breakdown?.manipulation_risk ??
       Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12))
     : 0;
+  const linkedCases = evidence
+    ? evidence.linked_conspiracy_ids.map((caseId) => conspiracies.find((item) => item.id === caseId) ?? {
+        id: caseId,
+        title: caseId.replace(/^case-/, "").replace(/-/g, " "),
+        summary: "",
+        credibility_avg: 0,
+        evidence_count: 0,
+        string_count: 0,
+        tags: [],
+        last_weaved: ""
+      })
+    : [];
 
   useEffect(() => {
     setMode("view");
@@ -92,6 +115,8 @@ export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDelet
     setSupplementFiles([]);
     setSupplementMessage(null);
     setDeleteMessage(null);
+    setCaseMessage(null);
+    setUnlinkingCaseId(null);
   }, [evidence?.id]);
 
   const activeReviewDraft = evidence && reviewDraft.evidenceId === evidence.id
@@ -206,6 +231,24 @@ export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDelet
     }
   }
 
+  async function unlinkCase(caseId: string) {
+    if (!evidence || !onUnlinkEvidenceFromCase) return;
+    const targetCase = linkedCases.find((item) => item.id === caseId);
+    const confirmed = window.confirm(`Remove "${evidence.title}" from "${targetCase?.title ?? caseId}"? This deletes the string but keeps the evidence and case.`);
+    if (!confirmed) return;
+
+    setUnlinkingCaseId(caseId);
+    setCaseMessage(null);
+    try {
+      await onUnlinkEvidenceFromCase(evidence.id, caseId);
+      setCaseMessage(`Removed from ${targetCase?.title ?? "case"}.`);
+    } catch (error) {
+      setCaseMessage(error instanceof Error ? error.message : "Could not remove that case link.");
+    } finally {
+      setUnlinkingCaseId(null);
+    }
+  }
+
   return (
     <>
       <div className="detail-heading">
@@ -286,6 +329,29 @@ export function EvidenceDetail({ evidence, isAdminHint = false, onClose, onDelet
             ) : (
               <p className="detail-empty">No supporting sources have been attached yet.</p>
             )}
+          </section>
+
+          <section className="detail-section">
+            <h3>Filed Under Cases</h3>
+            {linkedCases.length ? (
+              <div className="linked-case-list">
+                {linkedCases.map((item) => (
+                  <div key={item.id}>
+                    <span>{item.credibility_avg ? `${item.credibility_avg}/100` : "case"}</span>
+                    <strong>{item.title}</strong>
+                    {isAdminHint && mode === "edit" && onUnlinkEvidenceFromCase ? (
+                      <button onClick={() => void unlinkCase(item.id)} disabled={unlinkingCaseId === item.id} title="Remove string to this case">
+                        {unlinkingCaseId === item.id ? <Loader2 className="spin" size={13} /> : <Unlink size={13} />}
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="detail-empty">This evidence is not filed under a case.</p>
+            )}
+            {caseMessage ? <p className="detail-success">{caseMessage}</p> : null}
           </section>
 
           {isAdminHint && mode === "edit" ? (
