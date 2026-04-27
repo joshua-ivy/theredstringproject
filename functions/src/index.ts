@@ -474,14 +474,66 @@ async function findSimilarEvidence(evidenceId: string, embedding: number[]) {
 }
 
 function oracleTerms(question: string) {
+  const stopWords = new Set([
+    "show",
+    "with",
+    "and",
+    "the",
+    "for",
+    "all",
+    "cases",
+    "case",
+    "evidence",
+    "connecting",
+    "about",
+    "preserved",
+    "records",
+    "record",
+    "sources",
+    "source",
+    "what",
+    "which",
+    "from",
+    "that",
+    "this",
+    "are",
+    "can",
+    "you"
+  ]);
   const terms = question
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .split(/\s+/)
-    .filter((term) => term.length > 2 && !["show", "with", "and", "the", "for", "all", "cases", "case", "evidence", "connecting"].includes(term));
+    .map((term) => {
+      if (term === "ufos") return "ufo";
+      if (term === "uaps") return "uap";
+      if (term === "aliens") return "alien";
+      return term;
+    })
+    .filter((term) => term.length > 2 && !stopWords.has(term));
   const expanded = new Set(terms);
-  if (expanded.has("uap") || expanded.has("ufo")) {
-    ["uap", "ufo", "unidentified", "anomalous", "craft", "aerospace"].forEach((term) => expanded.add(term));
+  if (
+    expanded.has("uap") ||
+    expanded.has("ufo") ||
+    expanded.has("alien") ||
+    expanded.has("unidentified") ||
+    expanded.has("anomalous") ||
+    expanded.has("phenomena")
+  ) {
+    [
+      "uap",
+      "ufo",
+      "unidentified",
+      "anomalous",
+      "phenomena",
+      "phenomenon",
+      "aerial",
+      "craft",
+      "aerospace",
+      "sightings",
+      "reports",
+      "records"
+    ].forEach((term) => expanded.add(term));
   }
   if (expanded.has("mkultra") || expanded.has("mk")) {
     ["mkultra", "cia", "mind-control", "documents"].forEach((term) => expanded.add(term));
@@ -493,6 +545,9 @@ function scoreOracleDocument(data: FirebaseFirestore.DocumentData, terms: string
   const text = [
     data.title,
     data.content_text,
+    data.credibility_explanation,
+    data.source_url,
+    data.canonical_url,
     data.platform,
     data.type,
     ...(Array.isArray(data.entities) ? data.entities : []),
@@ -551,14 +606,15 @@ function calibratedCredibility(data: FirebaseFirestore.DocumentData) {
   const platform = String(data.platform ?? "").toLowerCase();
   const type = String(data.type ?? "").toLowerCase();
   const archiveStatus = String(data.archive_status ?? "link_only");
+  const officialHost = host.endsWith(".gov") || host.endsWith(".mil") || platform === "government" || platform === "military";
   let adjusted = stored;
   let floor = 0;
   const reasons: string[] = [];
 
-  if (host.endsWith(".gov") || platform === "government") {
+  if (officialHost) {
     if (stored < 80) adjusted += 8;
     floor = Math.max(floor, 82);
-    reasons.push("official government source");
+    reasons.push(host.endsWith(".mil") || platform === "military" ? "official military source" : "official government source");
   }
 
   if (host === "docs.house.gov" || host.endsWith(".house.gov")) {
@@ -577,7 +633,7 @@ function calibratedCredibility(data: FirebaseFirestore.DocumentData) {
     reasons.push("local archive copy");
   } else if (archiveStatus === "link_only") {
     reasons.push("source link retained without local mirror");
-    if (!host.endsWith(".gov") && platform !== "government") adjusted -= 1;
+    if (!officialHost) adjusted -= 1;
   }
 
   if (Array.isArray(data.manipulation_flags) && data.manipulation_flags.length > 0) {
@@ -600,7 +656,8 @@ function intakeTags(data: FirebaseFirestore.DocumentData) {
     String(data.platform ?? ""),
     String(data.type ?? "")
   ];
-  if (sourceHost(data).endsWith(".gov")) values.push("official-source");
+  const host = sourceHost(data);
+  if (host.endsWith(".gov") || host.endsWith(".mil")) values.push("official-source");
   return Array.from(new Set(values.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))).slice(0, 10);
 }
 
