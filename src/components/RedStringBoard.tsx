@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
-import { ChevronLeft, FolderOpen, Plus, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, Edit3, FolderOpen, Plus, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { db } from "@/lib/firebase";
 import type { Connection, Conspiracy, Evidence, Project } from "@/types/domain";
 
@@ -125,7 +125,7 @@ export function RedStringBoard({
   const [sharedPositions, setSharedPositions] = useState<Record<string, BoardNode>>({});
   const [personalPositions, setPersonalPositions] = useState<Record<string, BoardNode>>({});
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; evidenceId: string } | null>(null);
-  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectModalMode, setProjectModalMode] = useState<"create" | "edit" | null>(null);
   const [caseModalOpen, setCaseModalOpen] = useState(false);
   const [projectForm, setProjectForm] = useState({ title: "", summary: "", tags: "" });
   const [caseForm, setCaseForm] = useState({ title: "", summary: "", tags: "" });
@@ -381,17 +381,40 @@ export function RedStringBoard({
     ) as Record<string, BoardNode>;
   }
 
+  function openProjectModal(mode: "create" | "edit") {
+    if (!isAdminHint) {
+      setBoardMessage("Project management is admin-only.");
+      return;
+    }
+
+    const project = mode === "edit" ? activeProject : null;
+    if (mode === "edit" && !project) {
+      setBoardMessage("Open a project before editing it.");
+      return;
+    }
+
+    setProjectForm({
+      title: project?.title ?? "",
+      summary: project?.summary ?? "",
+      tags: project?.tags.join(", ") ?? ""
+    });
+    setProjectModalMode(mode);
+  }
+
   async function submitProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!isAdminHint) {
-      setBoardMessage("Project creation is admin-only.");
+      setBoardMessage("Project management is admin-only.");
       return;
     }
 
     const title = projectForm.title.trim();
     if (!title) return;
 
-    const id = `project-${slugify(title) || crypto.randomUUID()}`;
+    const id = projectModalMode === "edit" && activeProject
+      ? activeProject.id
+      : `project-${slugify(title) || crypto.randomUUID()}`;
+    const existingProject = projectModalMode === "edit" ? activeProject : null;
     setCreatingRecord(true);
     setBoardMessage(null);
     try {
@@ -400,22 +423,22 @@ export function RedStringBoard({
         {
           title,
           summary: projectForm.summary.trim() || "Top-level project for related case files and evidence.",
-          credibility_avg: 0,
-          case_count: 0,
-          evidence_count: 0,
-          string_count: 0,
+          credibility_avg: existingProject?.credibility_avg ?? 0,
+          case_count: existingProject?.case_count ?? 0,
+          evidence_count: existingProject?.evidence_count ?? 0,
+          string_count: existingProject?.string_count ?? 0,
           tags: splitTags(projectForm.tags),
-          status: "active",
+          status: existingProject?.status ?? "active",
           last_weaved: serverTimestamp(),
-          created_at: serverTimestamp(),
+          ...(projectModalMode === "create" ? { created_at: serverTimestamp() } : {}),
           updated_at: serverTimestamp()
         },
         { merge: true }
       );
       setProjectForm({ title: "", summary: "", tags: "" });
-      setProjectModalOpen(false);
+      setProjectModalMode(null);
       onOpenProject(id);
-      setBoardMessage(`Project opened: ${title}.`);
+      setBoardMessage(projectModalMode === "edit" ? `Updated project: ${title}.` : `Project opened: ${title}.`);
     } catch (error) {
       setBoardMessage(error instanceof Error ? error.message : "Project could not be saved.");
     } finally {
@@ -664,6 +687,11 @@ export function RedStringBoard({
           </button>
         ) : null}
         {activeProject ? <span>{activeProject.title}</span> : <span>Projects</span>}
+        {activeProject && isAdminHint ? (
+          <button onClick={() => openProjectModal("edit")} title="Edit project">
+            <Edit3 size={13} /> Edit
+          </button>
+        ) : null}
         {activeCase ? (
           <>
             <button onClick={onBackToProjectCases} title="Back to project cases">
@@ -856,7 +884,7 @@ export function RedStringBoard({
             setBoardMessage("Sign in as admin to create projects.");
             return;
           }
-          setProjectModalOpen(true);
+          openProjectModal("create");
         }}>
           <Plus size={12} /> New project
         </button>
@@ -885,14 +913,14 @@ export function RedStringBoard({
         </button>
       </div>
 
-      {projectModalOpen ? (
-        <div className="modal-backdrop board-modal-backdrop" role="presentation" onMouseDown={() => setProjectModalOpen(false)}>
+      {projectModalMode ? (
+        <div className="modal-backdrop board-modal-backdrop" role="presentation" onMouseDown={() => setProjectModalMode(null)}>
           <section className="case-modal board-create-modal" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setProjectModalOpen(false)} title="Close new project">
+            <button className="modal-close" onClick={() => setProjectModalMode(null)} title="Close project editor">
               <X size={16} />
             </button>
-            <p className="red-label">New project</p>
-            <h2 id="new-project-title">Create a project</h2>
+            <p className="red-label">{projectModalMode === "edit" ? "Project settings" : "New project"}</p>
+            <h2 id="new-project-title">{projectModalMode === "edit" ? "Rename project" : "Create a project"}</h2>
             <form className="intake-form exact-form" onSubmit={submitProject}>
               <label>
                 Project title
@@ -907,7 +935,8 @@ export function RedStringBoard({
                 <input value={projectForm.tags} onChange={(event) => setProjectForm((current) => ({ ...current, tags: event.target.value }))} placeholder="uap, defense, testimony" />
               </label>
               <button className="primary-button" disabled={creatingRecord || !projectForm.title.trim()}>
-                <Plus size={14} /> Create project
+                {projectModalMode === "edit" ? <Edit3 size={14} /> : <Plus size={14} />}
+                {projectModalMode === "edit" ? "Save project" : "Create project"}
               </button>
             </form>
           </section>

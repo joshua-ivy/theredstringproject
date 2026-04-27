@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { Archive, ChevronRight, FileText, Filter, FolderOpen, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Archive, ChevronRight, Edit3, FileText, Filter, FolderOpen, Loader2, Plus, Trash2, X } from "lucide-react";
 import { db, functions } from "@/lib/firebase";
 import type { Connection, Conspiracy, Evidence, Project } from "@/types/domain";
 
@@ -123,6 +123,10 @@ export function CaseFiles({
   const [documentCase, setDocumentCase] = useState<Conspiracy | null>(null);
   const [deleteCase, setDeleteCase] = useState<Conspiracy | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
+  const [projectModalMode, setProjectModalMode] = useState<"create" | "edit" | null>(null);
+  const [projectTitle, setProjectTitle] = useState("");
+  const [projectSummary, setProjectSummary] = useState("");
+  const [projectTags, setProjectTags] = useState("");
   const [caseTitle, setCaseTitle] = useState("");
   const [caseSummary, setCaseSummary] = useState("");
   const [caseTags, setCaseTags] = useState("");
@@ -133,6 +137,7 @@ export function CaseFiles({
   const averageCredibility = conspiracies.length
     ? Math.round(conspiracies.reduce((sum, item) => sum + item.credibility_avg, 0) / conspiracies.length)
     : 0;
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null;
 
   const casesWithSignals = useMemo(() => {
     return conspiracies.map((item) => {
@@ -154,6 +159,65 @@ export function CaseFiles({
   const documentEvidence = documentCase
     ? evidences.filter((evidence) => evidence.linked_conspiracy_ids.includes(documentCase.id))
     : [];
+
+  function openProjectModal(mode: "create" | "edit") {
+    if (!isAdminHint) {
+      setCaseMessage("Project management is admin-only.");
+      return;
+    }
+    const project = mode === "edit" ? selectedProject : null;
+    setProjectTitle(project?.title ?? "");
+    setProjectSummary(project?.summary ?? "");
+    setProjectTags(project?.tags.join(", ") ?? "");
+    setProjectModalMode(mode);
+  }
+
+  async function submitProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isAdminHint) {
+      setCaseMessage("Project management is admin-only.");
+      return;
+    }
+    const title = projectTitle.trim();
+    if (!title) return;
+
+    const projectId = projectModalMode === "edit" && selectedProject
+      ? selectedProject.id
+      : `project-${slugify(title) || crypto.randomUUID()}`;
+    const existingProject = projectModalMode === "edit" ? selectedProject : null;
+
+    setCaseBusy(true);
+    setCaseMessage(null);
+    try {
+      await setDoc(
+        doc(db, "projects", projectId),
+        {
+          title,
+          summary: projectSummary.trim() || "Top-level project for related case files and evidence.",
+          credibility_avg: existingProject?.credibility_avg ?? 0,
+          case_count: existingProject?.case_count ?? 0,
+          evidence_count: existingProject?.evidence_count ?? 0,
+          string_count: existingProject?.string_count ?? 0,
+          tags: projectTags.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean).slice(0, 12),
+          status: existingProject?.status ?? "active",
+          last_weaved: serverTimestamp(),
+          ...(projectModalMode === "create" ? { created_at: serverTimestamp() } : {}),
+          updated_at: serverTimestamp()
+        },
+        { merge: true }
+      );
+      onSelectProject(projectId);
+      setProjectModalMode(null);
+      setProjectTitle("");
+      setProjectSummary("");
+      setProjectTags("");
+      setCaseMessage(projectModalMode === "edit" ? `Updated ${title}.` : `Created ${title}.`);
+    } catch (error) {
+      setCaseMessage(error instanceof Error ? error.message : "Project could not be saved.");
+    } finally {
+      setCaseBusy(false);
+    }
+  }
 
   async function submitNewCase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -251,6 +315,16 @@ export function CaseFiles({
           <button className={showArchived ? "active-action" : ""} onClick={() => setShowArchived((current) => !current)}>
             <Archive size={12} /> {showArchived ? "Active" : "Archived"}
           </button>
+          {isAdminHint ? (
+            <>
+              <button onClick={() => openProjectModal("edit")} disabled={!selectedProject}>
+                <Edit3 size={12} /> Edit project
+              </button>
+              <button onClick={() => openProjectModal("create")}>
+                <Plus size={12} /> New project
+              </button>
+            </>
+          ) : null}
           <button className="danger-action" onClick={() => setNewCaseOpen(true)}>
             <Plus size={12} /> New case
           </button>
@@ -373,6 +447,36 @@ export function CaseFiles({
                 <span>Public visitors can browse cases, but opening a new investigation requires the approved admin account.</span>
               </div>
             )}
+          </section>
+        </div>
+      ) : null}
+
+      {projectModalMode ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setProjectModalMode(null)}>
+          <section className="case-modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setProjectModalMode(null)} title="Close project editor">
+              <X size={16} />
+            </button>
+            <p className="red-label">{projectModalMode === "edit" ? "Project settings" : "New project"}</p>
+            <h2 id="project-modal-title">{projectModalMode === "edit" ? "Rename project" : "Create a project"}</h2>
+            <form className="intake-form exact-form" onSubmit={submitProject}>
+              <label>
+                Project title
+                <input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="UFO / UAP" />
+              </label>
+              <label>
+                Summary
+                <textarea value={projectSummary} onChange={(event) => setProjectSummary(event.target.value)} placeholder="What broad investigation this project organizes" />
+              </label>
+              <label>
+                Tags
+                <input value={projectTags} onChange={(event) => setProjectTags(event.target.value)} placeholder="uap, defense, testimony" />
+              </label>
+              <button className="primary-button" disabled={caseBusy || !projectTitle.trim()}>
+                {caseBusy ? <Loader2 className="spin" size={15} /> : projectModalMode === "edit" ? <Edit3 size={14} /> : <Plus size={14} />}
+                {projectModalMode === "edit" ? "Save project" : "Create project"}
+              </button>
+            </form>
           </section>
         </div>
       ) : null}
