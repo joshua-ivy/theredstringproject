@@ -16,6 +16,38 @@ interface OracleResponse {
   citations: OracleCitation[];
 }
 
+const ORACLE_STOP_WORDS = new Set(["show", "with", "and", "the", "for", "all", "case", "cases", "evidence", "connecting"]);
+
+function localOracleTerms(question: string) {
+  const terms = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !ORACLE_STOP_WORDS.has(term));
+  const expanded = new Set(terms);
+  if (expanded.has("uap") || expanded.has("ufo")) {
+    ["uap", "ufo", "unidentified", "anomalous", "craft", "aerospace"].forEach((term) => expanded.add(term));
+  }
+  return Array.from(expanded);
+}
+
+function hasSpecificSource(evidence: Evidence) {
+  if (evidence.archived_assets.length > 0) {
+    return true;
+  }
+  if (evidence.source_url.startsWith("local://")) {
+    return evidence.archive_status === "archived";
+  }
+  try {
+    const parsed = new URL(evidence.canonical_url || evidence.source_url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const rootOnly = !parsed.pathname.replace(/\/+$/, "") && !parsed.search && !parsed.hash;
+    return !(rootOnly && ["youtube.com", "youtu.be", "x.com", "twitter.com", "reddit.com", "news.google.com"].includes(host));
+  } catch {
+    return false;
+  }
+}
+
 export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
   const [question, setQuestion] = useState("");
   const [credibilityMin, setCredibilityMin] = useState(55);
@@ -45,19 +77,26 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
       const result = await callable({ question: prompt, credibilityMin });
       setAnswer(result.data);
     } catch (caught) {
+      const terms = localOracleTerms(prompt);
       const localMatches = evidences
         .filter((evidence) => evidence.credibility_score >= credibilityMin)
-        .filter((evidence) =>
-          `${evidence.title} ${evidence.content_text} ${evidence.entities.join(" ")}`
-            .toLowerCase()
-            .includes(prompt.toLowerCase().split(" ")[0] ?? "")
-        )
+        .filter(hasSpecificSource)
+        .map((evidence) => {
+          const text = `${evidence.title} ${evidence.content_text} ${evidence.entities.join(" ")} ${evidence.tags.join(" ")}`.toLowerCase();
+          return { evidence, score: terms.reduce((sum, term) => sum + (text.includes(term) ? 1 : 0), 0) };
+        })
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score || b.evidence.credibility_score - a.evidence.credibility_score)
+        .map((item) => item.evidence)
         .slice(0, 5);
 
       if (localMatches.length > 0) {
+        const asksConnection = /\b(connect|connecting|connection|link|links|between|across|thread|string)\b/i.test(prompt);
+        const linkedCaseCount = new Set(localMatches.flatMap((evidence) => evidence.linked_conspiracy_ids)).size;
         setAnswer({
-          answer:
-            "The live Oracle function was unavailable, so this is a local fallback over currently loaded evidence. It found related records, but did not run Gemini reasoning.",
+          answer: asksConnection && (localMatches.length < 2 || linkedCaseCount < 2)
+            ? `The live Oracle function was unavailable. Local retrieval found ${localMatches.length} matching preserved record, which is not enough to claim a cross-case connection.`
+            : "The live Oracle function was unavailable, so this is a strict local retrieval over currently loaded evidence. It found related records, but did not run Gemini reasoning.",
           citations: localMatches.map((evidence) => ({
             evidenceId: evidence.id,
             title: evidence.title,

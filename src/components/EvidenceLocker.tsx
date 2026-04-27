@@ -14,6 +14,7 @@ interface EvidenceLockerProps {
 }
 
 type FilterKey = "all" | "approved" | "review";
+type LockerSort = "credibility" | "newest" | "risk";
 
 function manipulationScore(evidence: Evidence) {
   return Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12));
@@ -66,6 +67,8 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [sortMode, setSortMode] = useState<LockerSort>("credibility");
+  const [initialCredibility, setInitialCredibility] = useState<"low" | "med" | "high" | "auto">("auto");
 
   const filteredEvidence = useMemo(() => {
     if (filter === "approved") {
@@ -76,6 +79,14 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
     }
     return evidences;
   }, [evidences, filter]);
+
+  const sortedEvidence = useMemo(() => {
+    return [...filteredEvidence].sort((a, b) => {
+      if (sortMode === "newest") return Date.parse(b.created_at) - Date.parse(a.created_at);
+      if (sortMode === "risk") return manipulationScore(b) - manipulationScore(a);
+      return b.credibility_score - a.credibility_score;
+    });
+  }, [filteredEvidence, sortMode]);
 
   const archivedCount = useMemo(
     () => evidences.filter((evidence) => evidence.archive_status === "archived").length,
@@ -97,7 +108,10 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
       >(functions, "submitEvidenceUrl");
       const result = await callable({
         url: url.trim(),
-        notes: notes.trim() || undefined,
+        notes: [
+          notes.trim(),
+          initialCredibility !== "auto" ? `Initial credibility hint: ${initialCredibility}` : ""
+        ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
       setMessage(`Queued evidence ${result.data.evidenceId} (${result.data.status}).`);
@@ -144,7 +158,10 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
       const result = await callable({
         storagePath: path,
         sourceUrl: url.trim() || undefined,
-        notes: notes.trim() || undefined,
+        notes: [
+          notes.trim(),
+          initialCredibility !== "auto" ? `Initial credibility hint: ${initialCredibility}` : ""
+        ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
       setMessage(`Uploaded and queued evidence ${result.data.evidenceId}.`);
@@ -187,8 +204,15 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
               <div>
                 <div className="label-tag">Initial credibility</div>
                 <div className="segmented">
-                  {["low", "med", "high", "auto"].map((item) => (
-                    <button type="button" className={item === "auto" ? "active" : ""} key={item}>{item}</button>
+                  {(["low", "med", "high", "auto"] as const).map((item) => (
+                    <button
+                      type="button"
+                      className={initialCredibility === item ? "active" : ""}
+                      onClick={() => setInitialCredibility(item)}
+                      key={item}
+                    >
+                      {item}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -250,11 +274,16 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
               </button>
             ))}
           </div>
-          <button className="sort-button">Sort: credibility</button>
+          <button
+            className="sort-button"
+            onClick={() => setSortMode((current) => current === "credibility" ? "newest" : current === "newest" ? "risk" : "credibility")}
+          >
+            Sort: {sortMode}
+          </button>
         </div>
 
         <div className="evidence-table exact-evidence-table">
-          {filteredEvidence.map((evidence) => {
+          {sortedEvidence.map((evidence) => {
             const manip = manipulationScore(evidence);
             return (
               <article key={evidence.id} className="evidence-row exact-evidence-row" onClick={() => onSelect(evidence.id)}>

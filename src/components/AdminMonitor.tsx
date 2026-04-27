@@ -13,6 +13,7 @@ interface AdminMonitorProps {
 }
 
 const ACTIVITY_14D = [3, 5, 4, 7, 6, 8, 5, 9, 7, 11, 8, 10, 12, 9];
+const REVIEW_NOW = Date.parse("2026-04-27T00:00:00.000Z");
 
 function iso(value: unknown) {
   if (!value) return undefined;
@@ -51,6 +52,8 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
   const [searchRuns, setSearchRuns] = useState<SearchRun[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [last24Only, setLast24Only] = useState(false);
 
   useEffect(() => {
     if (!isAdminHint) return;
@@ -110,6 +113,15 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
     () => evidences.filter((evidence) => (evidence.review_status ?? "approved") !== "approved"),
     [evidences]
   );
+  const shownPendingEvidence = useMemo(() => {
+    return pendingEvidence.filter((evidence) => {
+      const passesFlag = !flaggedOnly || manipulationScore(evidence) > 30;
+      if (!last24Only) return passesFlag;
+      const created = Date.parse(evidence.created_at);
+      const passesWindow = Number.isNaN(created) || REVIEW_NOW - created <= 24 * 60 * 60 * 1000;
+      return passesFlag && passesWindow;
+    });
+  }, [flaggedOnly, last24Only, pendingEvidence]);
   const failedEvidence = useMemo(
     () => evidences.filter((evidence) => evidence.archive_status === "failed" || evidence.archive_status === "blocked" || evidence.analysis_status === "failed"),
     [evidences]
@@ -148,8 +160,12 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
           <span>Inbox for new sources, failed analyses, and scheduled crawl results.</span>
         </div>
         <div className="screen-actions">
-          <button><Filter size={12} /> Filter</button>
-          <button><Clock size={12} /> Last 24h</button>
+          <button className={flaggedOnly ? "active-action" : ""} onClick={() => setFlaggedOnly((current) => !current)}>
+            <Filter size={12} /> {flaggedOnly ? "All items" : "Flagged"}
+          </button>
+          <button className={last24Only ? "active-action" : ""} onClick={() => setLast24Only((current) => !current)}>
+            <Clock size={12} /> {last24Only ? "All time" : "Last 24h"}
+          </button>
         </div>
       </div>
 
@@ -173,7 +189,7 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
           <h3>Evidence waiting for the board</h3>
           {message ? <p className="system-message">{message}</p> : null}
           <div className="review-list exact-review-list">
-            {pendingEvidence.length ? pendingEvidence.map((evidence) => {
+            {shownPendingEvidence.length ? shownPendingEvidence.map((evidence) => {
               const manip = manipulationScore(evidence);
               return (
                 <article key={evidence.id} className="review-card exact-review-card">
@@ -204,7 +220,7 @@ export function AdminMonitor({ evidences, isAdminHint }: AdminMonitorProps) {
                   </div>
                 </article>
               );
-            }) : <div className="empty-state">No evidence is waiting for review. New search discoveries will appear here before they show on the board.</div>}
+            }) : <div className="empty-state">No evidence matches the current review filters. New search discoveries will appear here before they show on the board.</div>}
           </div>
           <div className="review-next">Next scheduled crawl in 3h 12m. New search discoveries will appear here before they show on the board.</div>
         </section>

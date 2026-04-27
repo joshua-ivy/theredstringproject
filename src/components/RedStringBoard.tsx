@@ -10,6 +10,8 @@ interface RedStringBoardProps {
   connections: Connection[];
   selectedEvidenceId: string | null;
   onSelectEvidence: (id: string) => void;
+  onPinEvidence: () => void;
+  onNewString: () => void;
 }
 
 type NodeKind = "evidence" | "case";
@@ -80,10 +82,13 @@ export function RedStringBoard({
   conspiracies,
   connections,
   selectedEvidenceId,
-  onSelectEvidence
+  onSelectEvidence,
+  onPinEvidence,
+  onNewString
 }: RedStringBoardProps) {
   const [zoom, setZoom] = useState(0.78);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [boardMessage, setBoardMessage] = useState<string | null>(null);
   const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
   const [drag, setDrag] = useState<
     | { mode: "pan"; startX: number; startY: number; originX: number; originY: number }
@@ -344,9 +349,20 @@ export function RedStringBoard({
         <span>/</span>
         <span>{conspiracies.length} case clusters</span>
       </div>
+      {boardMessage ? <div className="board-action-message">{boardMessage}</div> : null}
       <div className="board-help-corner">
-        <button><Plus size={12} /> Pin evidence</button>
-        <button>New string</button>
+        <button onClick={() => {
+          setBoardMessage("Opening Evidence Locker. Add or select evidence to pin it onto the board.");
+          onPinEvidence();
+        }}>
+          <Plus size={12} /> Pin evidence
+        </button>
+        <button onClick={() => {
+          setBoardMessage("Strings are created from analyzed evidence connections. Start from Evidence Locker intake.");
+          onNewString();
+        }}>
+          New string
+        </button>
       </div>
     </div>
   );

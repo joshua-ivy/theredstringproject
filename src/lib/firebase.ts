@@ -25,7 +25,7 @@ export const functions = getFunctions(firebaseApp, "us-central1");
 
 export const firebaseAI = getAI(firebaseApp, { backend: new GoogleAIBackend() });
 export const clientGenerativeModel = getGenerativeModel(firebaseAI, {
-  model: "gemini-2.5-flash"
+  model: "gemini-3-flash-preview"
 });
 
 export async function initAnalytics() {

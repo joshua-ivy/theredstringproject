@@ -374,6 +374,14 @@ function AuthenticatedApp({
                 conspiracies={conspiracies}
                 connections={connections}
                 selectedEvidenceId={selectedEvidence?.id ?? null}
+                onPinEvidence={() => {
+                  setActiveView("evidence-locker");
+                  setViewHash("evidence-locker");
+                }}
+                onNewString={() => {
+                  setActiveView("evidence-locker");
+                  setViewHash("evidence-locker");
+                }}
                 onSelectEvidence={(id) => {
                   setSelectedEvidenceId(id);
                   setMobileDetailOpen(true);
@@ -386,6 +394,7 @@ function AuthenticatedApp({
                 conspiracies={conspiracies}
                 evidences={boardEvidence}
                 connections={connections}
+                isAdminHint={isAdminHint}
                 onOpenCase={(caseId) => {
                   const firstEvidence = boardEvidence.find((evidence) =>
                     evidence.linked_conspiracy_ids.includes(caseId)

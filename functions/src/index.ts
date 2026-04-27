@@ -24,6 +24,7 @@ const GEMINI_API_KEY = defineSecret("GOOGLE_GENAI_API_KEY");
 const GOOGLE_PSE_API_KEY = defineSecret("GOOGLE_PSE_API_KEY");
 const GOOGLE_PSE_CX = defineString("GOOGLE_PSE_CX", { default: "" });
 const ADMIN_EMAILS = defineString("ADMIN_EMAILS", { default: "jivy26@gmail.com" });
+const GEMINI_TEXT_MODEL = "gemini-3-flash-preview";
 const DEFAULT_SEARCH_QUERIES = defineString("DEFAULT_SEARCH_QUERIES", {
   default: "site:.gov declassified archive intelligence documents,uap public testimony documents"
 });
@@ -389,7 +390,7 @@ async function runGeminiAnalysis(record: FirebaseFirestore.DocumentData, apiKey?
 
   const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: GEMINI_TEXT_MODEL,
     contents: credibilityPrompt({
       url: record.canonical_url,
       title: record.title,
@@ -501,6 +502,39 @@ function scoreOracleDocument(data: FirebaseFirestore.DocumentData, terms: string
   return terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
 }
 
+function hasSpecificEvidenceSource(data: FirebaseFirestore.DocumentData) {
+  if (Array.isArray(data.archived_assets) && data.archived_assets.length > 0) {
+    return true;
+  }
+
+  const sourceUrl = String(data.canonical_url || data.source_url || "").trim();
+  if (!sourceUrl) {
+    return false;
+  }
+
+  if (sourceUrl.startsWith("local://")) {
+    return data.archive_status === "archived";
+  }
+
+  try {
+    const parsed = new URL(sourceUrl);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const path = parsed.pathname.replace(/\/+$/, "");
+    const rootOnly = (!path || path === "") && !parsed.search && !parsed.hash;
+    const weakRootHosts = new Set([
+      "youtube.com",
+      "youtu.be",
+      "x.com",
+      "twitter.com",
+      "reddit.com",
+      "news.google.com"
+    ]);
+    return !(rootOnly && weakRootHosts.has(host));
+  } catch {
+    return false;
+  }
+}
+
 async function keywordEvidenceFallback(question: string, credibilityMin: number) {
   const snapshot = await db.collection("evidences").where("credibility_score", ">=", credibilityMin).limit(60).get();
   const terms = oracleTerms(question);
@@ -508,7 +542,7 @@ async function keywordEvidenceFallback(question: string, credibilityMin: number)
     .map((doc) => ({ doc, score: scoreOracleDocument(doc.data(), terms) }))
     .sort((a, b) => b.score - a.score || Number(b.doc.data().credibility_score ?? 0) - Number(a.doc.data().credibility_score ?? 0));
   const matches = ranked.filter((item) => item.score > 0);
-  return (matches.length ? matches : ranked).map((item) => item.doc).slice(0, 8);
+  return matches.map((item) => item.doc).slice(0, 8);
 }
 
 function mergeEvidenceDocs(...groups: FirebaseFirestore.QueryDocumentSnapshot[]) {
@@ -903,11 +937,23 @@ export const oracleAsk = onCall(
     const vectorDocs = queryEmbedding.length ? await findSimilarEvidence("__oracle__", queryEmbedding) : [];
     const fallbackDocs = vectorDocs.length < 3 ? await keywordEvidenceFallback(question, credibilityMin) : [];
     const evidenceDocs = mergeEvidenceDocs(...vectorDocs, ...fallbackDocs);
+    const terms = oracleTerms(question);
+    const asksForConnection = /\b(connect|connecting|connection|link|links|between|across|relat|thread|string)\b/i.test(question);
 
     const candidates = evidenceDocs
-      .map((doc) => ({ id: doc.id, ...doc.data() }) as FirebaseFirestore.DocumentData & { id: string })
+      .map((doc): FirebaseFirestore.DocumentData & { id: string } => ({ id: doc.id, ...doc.data() }))
       .filter((doc) => Number(doc.credibility_score ?? 0) >= credibilityMin)
+      .map((doc): FirebaseFirestore.DocumentData & { id: string; oracle_score: number } => ({
+        ...doc,
+        oracle_score: scoreOracleDocument(doc, terms)
+      }))
+      .filter((doc) => Number(doc.oracle_score ?? 0) > 0)
+      .filter(hasSpecificEvidenceSource)
       .slice(0, 8);
+
+    const linkedCaseCount = new Set(
+      candidates.flatMap((item) => Array.isArray(item.linked_conspiracy_ids) ? item.linked_conspiracy_ids.map(String) : [])
+    ).size;
 
     const context = candidates
       .map(
@@ -917,12 +963,16 @@ export const oracleAsk = onCall(
       .join("\n\n");
 
     let answer = "No preserved evidence matched the question at the requested credibility threshold.";
-    if (context) {
+    if (asksForConnection && (candidates.length < 2 || linkedCaseCount < 2)) {
+      answer = candidates.length
+        ? `Only ${candidates.length} preserved evidence record matched the question at credibility >= ${credibilityMin}. That is not enough to claim a cross-case connection. Add or approve more specific sources before asking Oracle to weave this thread.`
+        : "No specific preserved evidence matched the question at the requested credibility threshold.";
+    } else if (context) {
       if (apiKey) {
         try {
           const ai = new GoogleGenAI({ apiKey });
           const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: GEMINI_TEXT_MODEL,
             contents: oraclePrompt({ question, credibilityMin, context }),
             config: { temperature: 0.2 }
           });

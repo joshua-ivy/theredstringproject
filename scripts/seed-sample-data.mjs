@@ -76,18 +76,18 @@ const evidences = [
   },
   {
     id: "evidence-uap-hearing",
-    title: "Public UAP hearing reference",
-    type: "video",
-    platform: "youtube",
-    source_url: "https://www.youtube.com/",
-    canonical_url: "https://www.youtube.com/",
+    title: "House Oversight UAP hearing transcript",
+    type: "pdf",
+    platform: "government",
+    source_url: "https://docs.house.gov/meetings/GO/GO06/20230726/116282/HHRG-118-GO06-Transcript-20230726.pdf",
+    canonical_url: "https://docs.house.gov/meetings/GO/GO06/20230726/116282/HHRG-118-GO06-Transcript-20230726.pdf",
     content_text:
-      "Public testimony describing unidentified craft reports and alleged retrieval programs, retained as a source link until a specific archived record is added.",
-    credibility_score: 68,
+      "Official transcript for the July 26, 2023 House Oversight hearing on Unidentified Anomalous Phenomena, including testimony from Ryan Graves, David Fravor, and David Grusch about UAP reporting, safety concerns, and alleged retrieval programs.",
+    credibility_score: 72,
     credibility_explanation:
-      "Named witnesses and public setting improve provenance; claims remain second-hand without independently archived technical data.",
-    entities: ["UAP", "DoD", "aerospace"],
-    tags: ["uap", "testimony"],
+      "Primary government transcript with named witnesses and stable provenance. It documents sworn testimony, but the underlying claims still require independent corroborating records.",
+    entities: ["UAP", "House Oversight", "Ryan Graves", "David Fravor", "David Grusch", "DoD"],
+    tags: ["uap", "testimony", "house-oversight", "transcript"],
     archive_status: "link_only",
     linked_conspiracy_ids: ["case-uap"],
     review_status: "approved"
@@ -116,8 +116,8 @@ const connections = [
     from: "evidence-uap-hearing",
     to: "case-uap",
     type: "supports",
-    weight: 0.68,
-    ai_reason: "The public hearing reference aligns with the UAP disclosure case but needs stronger primary technical evidence."
+    weight: 0.72,
+    ai_reason: "The official House transcript documents public UAP testimony, while the factual claims inside that testimony still need corroborating records."
   }
 ];
 

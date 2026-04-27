@@ -1,16 +1,21 @@
 "use client";
 
-import { Archive, ChevronRight, FileText, Filter, FolderOpen, Plus } from "lucide-react";
+import { FormEvent, useMemo, useState } from "react";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { Archive, ChevronRight, FileText, Filter, FolderOpen, Loader2, Plus, X } from "lucide-react";
+import { db } from "@/lib/firebase";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 interface CaseFilesProps {
   conspiracies: Conspiracy[];
   evidences: Evidence[];
   connections: Connection[];
+  isAdminHint: boolean;
   onOpenCase: (caseId: string) => void;
 }
 
 type Composition = Record<"gov" | "archival" | "media" | "social", number>;
+type CaseSortMode = "heat" | "credibility" | "evidence";
 
 const displayNow = new Date("2026-04-26T20:18:00.000Z").getTime();
 
@@ -91,12 +96,90 @@ function HeatGauge({ value }: { value: number }) {
   );
 }
 
-export function CaseFiles({ conspiracies, evidences, connections, onOpenCase }: CaseFilesProps) {
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, onOpenCase }: CaseFilesProps) {
+  const [sortMode, setSortMode] = useState<CaseSortMode>("heat");
+  const [showArchived, setShowArchived] = useState(false);
+  const [documentCase, setDocumentCase] = useState<Conspiracy | null>(null);
+  const [newCaseOpen, setNewCaseOpen] = useState(false);
+  const [caseTitle, setCaseTitle] = useState("");
+  const [caseSummary, setCaseSummary] = useState("");
+  const [caseTags, setCaseTags] = useState("");
+  const [caseBusy, setCaseBusy] = useState(false);
+  const [caseMessage, setCaseMessage] = useState<string | null>(null);
   const totalEvidence = conspiracies.reduce((sum, item) => sum + item.evidence_count, 0);
   const totalStrings = Math.max(conspiracies.reduce((sum, item) => sum + item.string_count, 0), connections.length);
   const averageCredibility = conspiracies.length
     ? Math.round(conspiracies.reduce((sum, item) => sum + item.credibility_avg, 0) / conspiracies.length)
     : 0;
+
+  const casesWithSignals = useMemo(() => {
+    return conspiracies.map((item) => {
+      const caseEvidence = evidences.filter((evidence) => evidence.linked_conspiracy_ids.includes(item.id));
+      const heat = Math.max(30, Math.min(82, Math.round((item.credibility_avg + item.string_count) / 1.34)));
+      return { item, caseEvidence, heat };
+    });
+  }, [conspiracies, evidences]);
+
+  const visibleCases = useMemo(() => {
+    if (showArchived) return [];
+    return [...casesWithSignals].sort((a, b) => {
+      if (sortMode === "credibility") return b.item.credibility_avg - a.item.credibility_avg;
+      if (sortMode === "evidence") return b.item.evidence_count - a.item.evidence_count;
+      return b.heat - a.heat;
+    });
+  }, [casesWithSignals, showArchived, sortMode]);
+
+  const documentEvidence = documentCase
+    ? evidences.filter((evidence) => evidence.linked_conspiracy_ids.includes(documentCase.id))
+    : [];
+
+  async function submitNewCase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isAdminHint) {
+      setCaseMessage("Case creation is admin-only.");
+      return;
+    }
+    const title = caseTitle.trim();
+    if (!title) return;
+
+    setCaseBusy(true);
+    setCaseMessage(null);
+    try {
+      const id = `case-${slugify(title) || crypto.randomUUID()}`;
+      await setDoc(
+        doc(db, "conspiracies", id),
+        {
+          title,
+          summary: caseSummary.trim() || "New case opened for evidence review.",
+          credibility_avg: 0,
+          evidence_count: 0,
+          string_count: 0,
+          tags: caseTags.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean).slice(0, 12),
+          thumbnail: null,
+          last_weaved: serverTimestamp(),
+          embedding: []
+        },
+        { merge: true }
+      );
+      setCaseMessage(`Opened ${title}.`);
+      setCaseTitle("");
+      setCaseSummary("");
+      setCaseTags("");
+      setNewCaseOpen(false);
+    } catch (error) {
+      setCaseMessage(error instanceof Error ? error.message : "New case could not be saved.");
+    } finally {
+      setCaseBusy(false);
+    }
+  }
 
   return (
     <div className="case-screen exact-screen">
@@ -107,11 +190,21 @@ export function CaseFiles({ conspiracies, evidences, connections, onOpenCase }: 
           <span>Threads, dossiers, and clusters of related evidence currently being reviewed.</span>
         </div>
         <div className="screen-actions">
-          <button><Filter size={12} /> Sort: heat</button>
-          <button><Archive size={12} /> Archived</button>
-          <button className="danger-action"><Plus size={12} /> New case</button>
+          <button
+            onClick={() => setSortMode((current) => current === "heat" ? "credibility" : current === "credibility" ? "evidence" : "heat")}
+            title="Cycle case sorting"
+          >
+            <Filter size={12} /> Sort: {sortMode}
+          </button>
+          <button className={showArchived ? "active-action" : ""} onClick={() => setShowArchived((current) => !current)}>
+            <Archive size={12} /> {showArchived ? "Active" : "Archived"}
+          </button>
+          <button className="danger-action" onClick={() => setNewCaseOpen(true)}>
+            <Plus size={12} /> New case
+          </button>
         </div>
       </div>
+      {caseMessage ? <p className="system-message">{caseMessage}</p> : null}
 
       <div className="case-kpis exact-kpis">
         <p><strong>{conspiracies.length}</strong>open cases</p>
@@ -121,10 +214,8 @@ export function CaseFiles({ conspiracies, evidences, connections, onOpenCase }: 
       </div>
 
       <div className="case-grid exact-case-grid">
-        {conspiracies.map((item) => {
-          const caseEvidence = evidences.filter((evidence) => evidence.linked_conspiracy_ids.includes(item.id));
+        {visibleCases.length ? visibleCases.map(({ item, caseEvidence, heat }) => {
           const caseAverageCredibility = item.credibility_avg;
-          const heat = Math.max(30, Math.min(82, Math.round((caseAverageCredibility + item.string_count) / 1.34)));
           const lastWeaved = shortDate(item.last_weaved);
 
           return (
@@ -156,17 +247,93 @@ export function CaseFiles({ conspiracies, evidences, connections, onOpenCase }: 
                 <button onClick={() => onOpenCase(item.id)}>
                   Open on board <ChevronRight size={12} />
                 </button>
-                <button title="Case document"><FileText size={12} /></button>
+                <button title="Case document" onClick={() => setDocumentCase(item)}><FileText size={12} /></button>
               </div>
             </article>
           );
-        })}
+        }) : (
+          <div className="case-empty-state">
+            <Archive size={24} />
+            <strong>No archived cases yet</strong>
+            <span>Archiving will move completed investigations here once that review state exists.</span>
+          </div>
+        )}
 
-        <button className="new-case-card" type="button">
+        <button className="new-case-card" type="button" onClick={() => setNewCaseOpen(true)}>
           <Plus size={28} />
           Open a new case
         </button>
       </div>
+
+      {newCaseOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setNewCaseOpen(false)}>
+          <section className="case-modal" role="dialog" aria-modal="true" aria-labelledby="new-case-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setNewCaseOpen(false)} title="Close new case">
+              <X size={16} />
+            </button>
+            <p className="red-label">New investigation</p>
+            <h2 id="new-case-title">Open a new case</h2>
+            {isAdminHint ? (
+              <form className="intake-form exact-form" onSubmit={submitNewCase}>
+                <label>
+                  Case title
+                  <input value={caseTitle} onChange={(event) => setCaseTitle(event.target.value)} placeholder="Case name" />
+                </label>
+                <label>
+                  Summary
+                  <textarea value={caseSummary} onChange={(event) => setCaseSummary(event.target.value)} placeholder="What this case is collecting and why it matters" />
+                </label>
+                <label>
+                  Tags
+                  <input value={caseTags} onChange={(event) => setCaseTags(event.target.value)} placeholder="cia, archive, documents" />
+                </label>
+                <button className="primary-button" disabled={caseBusy || !caseTitle.trim()}>
+                  {caseBusy ? <Loader2 className="spin" size={15} /> : <Plus size={14} />}
+                  Create case
+                </button>
+              </form>
+            ) : (
+              <div className="admin-only-panel">
+                <p className="red-label">Admin-only</p>
+                <span>Public visitors can browse cases, but opening a new investigation requires the approved admin account.</span>
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
+
+      {documentCase ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDocumentCase(null)}>
+          <section className="case-modal case-document-modal" role="dialog" aria-modal="true" aria-labelledby="case-document-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setDocumentCase(null)} title="Close case document">
+              <X size={16} />
+            </button>
+            <p className="red-label">Case document / {caseCode(documentCase.id)}</p>
+            <h2 id="case-document-title">{documentCase.title}</h2>
+            <p>{documentCase.summary}</p>
+            <div className="case-document-grid">
+              <span><strong>{documentCase.evidence_count}</strong>evidence</span>
+              <span><strong>{documentCase.string_count}</strong>strings</span>
+              <span><strong>{documentCase.credibility_avg}</strong>avg credibility</span>
+            </div>
+            <div className="entity-list compact">
+              {documentCase.tags.map((tag) => <span key={tag}>#{tag}</span>)}
+            </div>
+            <div className="case-document-list">
+              <div className="label-tag">Linked evidence</div>
+              {documentEvidence.length ? documentEvidence.map((evidence) => (
+                <button key={evidence.id} onClick={() => onOpenCase(documentCase.id)}>
+                  <strong>{evidence.title}</strong>
+                  <span>{evidence.platform} / {evidence.credibility_score}/100 / {evidence.archive_status.replace("_", " ")}</span>
+                </button>
+              )) : <span>No linked evidence yet.</span>}
+            </div>
+            <button className="primary-button" onClick={() => onOpenCase(documentCase.id)}>
+              Open on board <ChevronRight size={14} />
+            </button>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
