@@ -5,9 +5,12 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { Archive, ChevronRight, FileText, Filter, FolderOpen, Loader2, Plus, Trash2, X } from "lucide-react";
 import { db, functions } from "@/lib/firebase";
-import type { Connection, Conspiracy, Evidence } from "@/types/domain";
+import type { Connection, Conspiracy, Evidence, Project } from "@/types/domain";
 
 interface CaseFilesProps {
+  projects: Project[];
+  selectedProjectId: string | null;
+  onSelectProject: (projectId: string) => void;
   conspiracies: Conspiracy[];
   evidences: Evidence[];
   connections: Connection[];
@@ -105,7 +108,16 @@ function slugify(value: string) {
     .slice(0, 80);
 }
 
-export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, onOpenCase }: CaseFilesProps) {
+export function CaseFiles({
+  projects,
+  selectedProjectId,
+  onSelectProject,
+  conspiracies,
+  evidences,
+  connections,
+  isAdminHint,
+  onOpenCase
+}: CaseFilesProps) {
   const [sortMode, setSortMode] = useState<CaseSortMode>("heat");
   const [showArchived, setShowArchived] = useState(false);
   const [documentCase, setDocumentCase] = useState<Conspiracy | null>(null);
@@ -159,6 +171,7 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
       await setDoc(
         doc(db, "conspiracies", id),
         {
+          project_id: selectedProjectId,
           title,
           summary: caseSummary.trim() || "New case opened for evidence review.",
           credibility_avg: 0,
@@ -171,6 +184,16 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
         },
         { merge: true }
       );
+      if (selectedProjectId) {
+        await setDoc(
+          doc(db, "projects", selectedProjectId),
+          {
+            updated_at: serverTimestamp(),
+            last_weaved: serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
       setCaseMessage(`Opened ${title}.`);
       setCaseTitle("");
       setCaseSummary("");
@@ -233,6 +256,20 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
           </button>
         </div>
       </div>
+      {projects.length ? (
+        <div className="project-switcher" aria-label="Project filter">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              className={project.id === selectedProjectId ? "active" : ""}
+              onClick={() => onSelectProject(project.id)}
+            >
+              <strong>{project.title}</strong>
+              <span>{project.case_count} cases / {project.evidence_count} records</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       {caseMessage ? <p className="system-message">{caseMessage}</p> : null}
 
       <div className="case-kpis exact-kpis">

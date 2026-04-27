@@ -1103,6 +1103,37 @@ function chunks<T>(items: T[], size: number) {
   return groups;
 }
 
+async function recomputeProjectAggregate(projectId: string) {
+  if (!projectId) {
+    return;
+  }
+
+  const projectRef = db.collection("projects").doc(projectId);
+  const projectSnap = await projectRef.get();
+  if (!projectSnap.exists) {
+    return;
+  }
+
+  const caseSnapshot = await db.collection("conspiracies").where("project_id", "==", projectId).get();
+  const cases = caseSnapshot.docs.map((doc) => doc.data());
+  const evidenceCount = cases.reduce((sum, item) => sum + Number(item.evidence_count ?? 0), 0);
+  const stringCount = cases.reduce((sum, item) => sum + Number(item.string_count ?? 0), 0);
+  const weightedScore = cases.reduce(
+    (sum, item) => sum + Number(item.credibility_avg ?? 0) * Math.max(1, Number(item.evidence_count ?? 0)),
+    0
+  );
+  const scoreWeight = cases.reduce((sum, item) => sum + Math.max(1, Number(item.evidence_count ?? 0)), 0);
+
+  await projectRef.update({
+    case_count: caseSnapshot.size,
+    evidence_count: evidenceCount,
+    string_count: stringCount,
+    credibility_avg: scoreWeight ? Math.round(weightedScore / scoreWeight) : 0,
+    last_weaved: FieldValue.serverTimestamp(),
+    updated_at: FieldValue.serverTimestamp()
+  });
+}
+
 async function recomputeCaseAggregate(caseId: string) {
   const caseRef = db.collection("conspiracies").doc(caseId);
   const caseSnap = await caseRef.get();
@@ -1110,6 +1141,7 @@ async function recomputeCaseAggregate(caseId: string) {
     return;
   }
 
+  const caseData = caseSnap.data() ?? {};
   const evidenceSnapshot = await db.collection("evidences").where("linked_conspiracy_ids", "array-contains", caseId).get();
   const connectionSnapshot = await db.collection("connections").where("to", "==", caseId).get();
   const scores = evidenceSnapshot.docs.map((doc) => Number(doc.data().credibility_score ?? 0)).filter((score) => Number.isFinite(score));
@@ -1123,6 +1155,8 @@ async function recomputeCaseAggregate(caseId: string) {
     credibility_avg: credibility,
     last_weaved: FieldValue.serverTimestamp()
   });
+
+  await recomputeProjectAggregate(String(caseData.project_id ?? ""));
 }
 
 export const addEvidenceSupplements = onCall({ region: "us-central1" }, async (request) => {
@@ -1238,6 +1272,11 @@ export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (r
 
   const { caseId } = input.data;
   const caseRef = db.collection("conspiracies").doc(caseId);
+  const caseSnap = await caseRef.get();
+  if (!caseSnap.exists) {
+    throw new HttpsError("not-found", "Case file was not found.");
+  }
+  const projectId = String(caseSnap.data()?.project_id ?? "");
   const evidenceSnapshot = await db.collection("evidences").where("linked_conspiracy_ids", "array-contains", caseId).get();
   const evidenceIds = evidenceSnapshot.docs.map((doc) => doc.id);
   const assetPaths = new Set<string>();
@@ -1289,6 +1328,8 @@ export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (r
     connectionCount: connectionRefs.size,
     assetsDeleted
   });
+
+  await recomputeProjectAggregate(projectId);
 
   return {
     caseId,
@@ -1363,6 +1404,9 @@ export const linkEvidenceToCase = onCall({ region: "us-central1" }, async (reque
       last_weaved: FieldValue.serverTimestamp()
     });
   });
+
+  const linkedCaseSnap = await caseRef.get();
+  await recomputeProjectAggregate(String(linkedCaseSnap.data()?.project_id ?? ""));
 
   return { evidenceId, caseId, status: "linked" };
 });

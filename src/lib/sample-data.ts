@@ -1,10 +1,56 @@
-import type { Connection, Conspiracy, Evidence } from "@/types/domain";
+import type { Connection, Conspiracy, Evidence, Project } from "@/types/domain";
 
 const now = "2026-04-26T20:18:00.000Z";
+
+export const sampleProjects: Project[] = [
+  {
+    id: "project-historical-intelligence",
+    title: "Historical Intelligence Programs",
+    summary: "Declassified programs, oversight records, and archive trails tied to intelligence activity.",
+    credibility_avg: 75,
+    case_count: 2,
+    evidence_count: 11,
+    string_count: 20,
+    tags: ["cia", "fbi", "archives"],
+    status: "active",
+    last_weaved: now,
+    created_at: now,
+    updated_at: now
+  },
+  {
+    id: "project-uap",
+    title: "UFO / UAP",
+    summary: "Government hearings, official reports, witness testimony, and aerospace records related to anomalous phenomena.",
+    credibility_avg: 78,
+    case_count: 1,
+    evidence_count: 5,
+    string_count: 9,
+    tags: ["uap", "ufo", "defense"],
+    status: "active",
+    last_weaved: now,
+    created_at: now,
+    updated_at: now
+  },
+  {
+    id: "project-election-media",
+    title: "Election Media Claims",
+    summary: "Claims about media amplification, voting systems, and cross-platform influence campaigns.",
+    credibility_avg: 41,
+    case_count: 1,
+    evidence_count: 4,
+    string_count: 6,
+    tags: ["media", "elections", "influence"],
+    status: "active",
+    last_weaved: now,
+    created_at: now,
+    updated_at: now
+  }
+];
 
 export const sampleConspiracies: Conspiracy[] = [
   {
     id: "case-mkultra",
+    project_id: "project-historical-intelligence",
     title: "Project MKUltra",
     summary: "Historical records and recurring claims around covert mind-control programs, chemical experimentation, and institutional oversight.",
     credibility_avg: 78,
@@ -15,6 +61,7 @@ export const sampleConspiracies: Conspiracy[] = [
   },
   {
     id: "case-uap",
+    project_id: "project-uap",
     title: "UAP Disclosure",
     summary: "Statements, imagery, and testimony related to unidentified anomalous phenomena and defense-program secrecy.",
     credibility_avg: 78,
@@ -25,6 +72,7 @@ export const sampleConspiracies: Conspiracy[] = [
   },
   {
     id: "case-cointel",
+    project_id: "project-historical-intelligence",
     title: "COINTELPRO Cross-Refs",
     summary: "FBI counter-intelligence program records, surveillance directives, and contemporary parallels surfaced by archive cross-reference.",
     credibility_avg: 71,
@@ -35,6 +83,7 @@ export const sampleConspiracies: Conspiracy[] = [
   },
   {
     id: "case-election-media",
+    project_id: "project-election-media",
     title: "Election Media Claims",
     summary: "Claims about media amplification, voting-system narratives, and cross-platform influence campaigns.",
     credibility_avg: 41,

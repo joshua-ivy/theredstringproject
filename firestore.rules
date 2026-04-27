@@ -20,12 +20,22 @@ service cloud.firestore {
       allow write: if admin();
     }
 
+    match /projects/{docId} {
+      allow read: if true;
+      allow write: if admin();
+    }
+
     match /evidences/{docId} {
       allow read: if true;
       allow write: if admin();
     }
 
     match /connections/{docId} {
+      allow read: if true;
+      allow write: if admin();
+    }
+
+    match /board_layouts/{docId} {
       allow read: if true;
       allow write: if admin();
     }

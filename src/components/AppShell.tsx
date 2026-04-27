@@ -23,8 +23,8 @@ import { EvidenceLocker } from "@/components/EvidenceLocker";
 import { OraclePanel } from "@/components/OraclePanel";
 import { RedStringBoard } from "@/components/RedStringBoard";
 import { db, functions } from "@/lib/firebase";
-import { sampleConnections, sampleConspiracies, sampleEvidence } from "@/lib/sample-data";
-import type { Connection, Conspiracy, Evidence } from "@/types/domain";
+import { sampleConnections, sampleConspiracies, sampleEvidence, sampleProjects } from "@/lib/sample-data";
+import type { Connection, Conspiracy, Evidence, Project } from "@/types/domain";
 
 type ViewKey = "web" | "case-files" | "evidence-locker" | "oracle" | "review";
 
@@ -67,6 +67,89 @@ function iso(value: unknown) {
   return new Date(value as string | number | Date).toISOString();
 }
 
+function slugifyProject(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+function inferredProjectForCase(item: Conspiracy) {
+  const haystack = `${item.id} ${item.title} ${item.summary} ${item.tags.join(" ")}`.toLowerCase();
+  if (/\b(uap|ufo|aaro|aerospace|anomalous)\b/.test(haystack)) return "project-uap";
+  if (/\b(election|voting|media)\b/.test(haystack)) return "project-election-media";
+  if (/\b(whcd|allen|crooks|timeline)\b/.test(haystack)) return "project-whcd";
+  if (/\b(mkultra|cointel|cia|fbi|intelligence|archive)\b/.test(haystack)) return "project-historical-intelligence";
+  return `project-${slugifyProject(item.tags[0] ?? item.title) || "general"}`;
+}
+
+function fallbackProject(id: string, cases: Conspiracy[]): Project {
+  const titleById: Record<string, string> = {
+    "project-uap": "UFO / UAP",
+    "project-election-media": "Election Media Claims",
+    "project-whcd": "WHCD / Cole Allen Timeline",
+    "project-historical-intelligence": "Historical Intelligence Programs"
+  };
+  const tags = Array.from(new Set(cases.flatMap((item) => item.tags))).slice(0, 8);
+  return {
+    id,
+    title: titleById[id] ?? id.replace(/^project-/, "").replace(/-/g, " "),
+    summary: "Top-level project containing related case files and preserved evidence.",
+    credibility_avg: 0,
+    case_count: 0,
+    evidence_count: 0,
+    string_count: 0,
+    tags,
+    status: "active",
+    last_weaved: fallbackIso
+  };
+}
+
+function withProjectIds(conspiracies: Conspiracy[]) {
+  return conspiracies.map((item) => ({
+    ...item,
+    project_id: item.project_id ?? inferredProjectForCase(item)
+  }));
+}
+
+function deriveProjects(projects: Project[], conspiracies: Conspiracy[], evidences: Evidence[], connections: Connection[]) {
+  const projectMap = new Map(projects.map((item) => [item.id, item]));
+  const casesByProject = new Map<string, Conspiracy[]>();
+  conspiracies.forEach((item) => {
+    const projectId = item.project_id ?? inferredProjectForCase(item);
+    casesByProject.set(projectId, [...(casesByProject.get(projectId) ?? []), item]);
+  });
+
+  casesByProject.forEach((cases, projectId) => {
+    if (!projectMap.has(projectId)) {
+      projectMap.set(projectId, fallbackProject(projectId, cases));
+    }
+  });
+
+  return Array.from(projectMap.values())
+    .map((project) => {
+      const projectCases = casesByProject.get(project.id) ?? [];
+      const caseIds = new Set(projectCases.map((item) => item.id));
+      const projectEvidence = evidences.filter((evidence) => evidence.linked_conspiracy_ids.some((caseId) => caseIds.has(caseId)));
+      const scores = projectEvidence.map((item) => item.credibility_score).filter((score) => Number.isFinite(score));
+      return {
+        ...project,
+        case_count: projectCases.length,
+        evidence_count: projectEvidence.length,
+        string_count: Math.max(
+          projectCases.reduce((sum, item) => sum + Number(item.string_count ?? 0), 0),
+          connections.filter((connection) => caseIds.has(connection.to) || caseIds.has(connection.from)).length
+        ),
+        credibility_avg: scores.length
+          ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+          : project.credibility_avg,
+        tags: project.tags.length ? project.tags : Array.from(new Set(projectCases.flatMap((item) => item.tags))).slice(0, 8)
+      };
+    })
+    .sort((a, b) => b.evidence_count - a.evidence_count || a.title.localeCompare(b.title));
+}
+
 export function AppShell() {
   return (
     <AuthGate>
@@ -106,8 +189,11 @@ function AuthenticatedApp({
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [evidences, setEvidences] = useState<Evidence[]>(sampleEvidence);
   const [conspiracies, setConspiracies] = useState<Conspiracy[]>(sampleConspiracies);
+  const [projects, setProjects] = useState<Project[]>(sampleProjects);
   const [connections, setConnections] = useState<Connection[]>(sampleConnections);
   const [dataStatus, setDataStatus] = useState<"live" | "sample" | "error">("sample");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
   useEffect(() => {
     const syncFromHash = () => {
@@ -126,6 +212,7 @@ function AuthenticatedApp({
     const evidenceQuery = query(collection(db, "evidences"), orderBy("created_at", "desc"), limit(100));
     const conspiracyQuery = query(collection(db, "conspiracies"), orderBy("last_weaved", "desc"), limit(60));
     const connectionQuery = query(collection(db, "connections"), orderBy("created_at", "desc"), limit(250));
+    const projectQuery = query(collection(db, "projects"), orderBy("updated_at", "desc"), limit(60));
 
     const unsubscribeEvidence = onSnapshot(
       evidenceQuery,
@@ -164,11 +251,38 @@ function AuthenticatedApp({
           return {
             ...data,
             id: doc.id,
+            project_id: data.project_id ? String(data.project_id) : undefined,
             last_weaved: iso(data.last_weaved),
             tags: data.tags ?? []
           } as Conspiracy;
         });
         setConspiracies(docs);
+      },
+      () => setDataStatus("error")
+    );
+
+    const unsubscribeProjects = onSnapshot(
+      projectQuery,
+      (snapshot) => {
+        const docs = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            ...data,
+            id: doc.id,
+            title: String(data.title ?? doc.id),
+            summary: String(data.summary ?? ""),
+            credibility_avg: Number(data.credibility_avg ?? 0),
+            case_count: Number(data.case_count ?? 0),
+            evidence_count: Number(data.evidence_count ?? 0),
+            string_count: Number(data.string_count ?? 0),
+            tags: data.tags ?? [],
+            status: data.status ?? "active",
+            last_weaved: iso(data.last_weaved),
+            created_at: data.created_at ? iso(data.created_at) : undefined,
+            updated_at: data.updated_at ? iso(data.updated_at) : undefined
+          } as Project;
+        });
+        setProjects(docs);
       },
       () => setDataStatus("error")
     );
@@ -193,6 +307,7 @@ function AuthenticatedApp({
     return () => {
       unsubscribeEvidence();
       unsubscribeConspiracies();
+      unsubscribeProjects();
       unsubscribeConnections();
     };
   }, []);
@@ -219,12 +334,43 @@ function AuthenticatedApp({
     });
   }, [credibilityMin, evidences, searchTerm]);
 
-  const selectedEvidence = useMemo(
-    () => evidences.find((evidence) => evidence.id === selectedEvidenceId) ?? filteredEvidence[0] ?? null,
-    [evidences, filteredEvidence, selectedEvidenceId]
+  const effectiveConspiracies = useMemo(() => withProjectIds(conspiracies), [conspiracies]);
+  const effectiveProjects = useMemo(
+    () => deriveProjects(projects, effectiveConspiracies, evidences, connections),
+    [connections, effectiveConspiracies, evidences, projects]
+  );
+  const activeProjectId = selectedProjectId && effectiveProjects.some((project) => project.id === selectedProjectId)
+    ? selectedProjectId
+    : effectiveProjects[0]?.id ?? null;
+  const activeCaseId = selectedCaseId && effectiveConspiracies.some(
+    (item) => item.id === selectedCaseId && (!activeProjectId || item.project_id === activeProjectId)
+  )
+    ? selectedCaseId
+    : null;
+  const projectCases = useMemo(
+    () => effectiveConspiracies.filter((item) => activeProjectId ? item.project_id === activeProjectId : true),
+    [activeProjectId, effectiveConspiracies]
+  );
+  const projectCaseIds = useMemo(() => new Set(projectCases.map((item) => item.id)), [projectCases]);
+  const projectEvidence = useMemo(
+    () => filteredEvidence.filter((evidence) => evidence.linked_conspiracy_ids.some((caseId) => projectCaseIds.has(caseId))),
+    [filteredEvidence, projectCaseIds]
+  );
+  const caseEvidence = useMemo(
+    () => activeCaseId
+      ? filteredEvidence.filter((evidence) => evidence.linked_conspiracy_ids.includes(activeCaseId))
+      : projectEvidence,
+    [activeCaseId, filteredEvidence, projectEvidence]
   );
 
-  const boardEvidence = filteredEvidence;
+  const selectedEvidence = useMemo(
+    () => evidences.find((evidence) => evidence.id === selectedEvidenceId) ?? caseEvidence[0] ?? filteredEvidence[0] ?? null,
+    [caseEvidence, evidences, filteredEvidence, selectedEvidenceId]
+  );
+
+  const boardEvidence = selectedProjectId ? caseEvidence : filteredEvidence;
+  const boardCases = selectedProjectId ? projectCases : effectiveConspiracies;
+  const detailEvidence = activeView === "web" && !selectedProjectId ? null : selectedEvidence;
 
   const shouldShowDetail = activeView === "web" || activeView === "case-files";
 
@@ -340,10 +486,34 @@ function AuthenticatedApp({
             {activeView === "web" ? (
               <RedStringBoard
                 evidences={boardEvidence}
-                conspiracies={conspiracies}
+                conspiracies={boardCases}
+                projects={effectiveProjects}
                 connections={connections}
-                selectedEvidenceId={selectedEvidence?.id ?? null}
+                activeProjectId={selectedProjectId && effectiveProjects.some((project) => project.id === selectedProjectId) ? selectedProjectId : null}
+                activeCaseId={activeCaseId}
+                selectedEvidenceId={detailEvidence?.id ?? null}
                 isAdminHint={isAdminHint}
+                onOpenProject={(projectId) => {
+                  setSelectedProjectId(projectId);
+                  setSelectedCaseId(null);
+                  setSelectedEvidenceId(null);
+                }}
+                onBackToProjects={() => {
+                  setSelectedProjectId(null);
+                  setSelectedCaseId(null);
+                  setSelectedEvidenceId(null);
+                }}
+                onOpenCase={(caseId) => {
+                  const targetCase = effectiveConspiracies.find((item) => item.id === caseId);
+                  setSelectedProjectId(targetCase?.project_id ?? activeProjectId);
+                  setSelectedCaseId(caseId);
+                  const firstEvidence = filteredEvidence.find((evidence) => evidence.linked_conspiracy_ids.includes(caseId));
+                  setSelectedEvidenceId(firstEvidence?.id ?? null);
+                }}
+                onBackToProjectCases={() => {
+                  setSelectedCaseId(null);
+                  setSelectedEvidenceId(null);
+                }}
                 onLinkEvidenceToCase={async (evidenceId, caseId) => {
                   const callable = httpsCallable<
                     { evidenceId: string; caseId: string },
@@ -377,14 +547,23 @@ function AuthenticatedApp({
 
             {activeView === "case-files" ? (
               <CaseFiles
-                conspiracies={conspiracies}
+                projects={effectiveProjects}
+                selectedProjectId={activeProjectId}
+                onSelectProject={(projectId) => {
+                  setSelectedProjectId(projectId);
+                  setSelectedCaseId(null);
+                }}
+                conspiracies={projectCases}
                 evidences={boardEvidence}
                 connections={connections}
                 isAdminHint={isAdminHint}
                 onOpenCase={(caseId) => {
+                  const targetCase = effectiveConspiracies.find((evidenceCase) => evidenceCase.id === caseId);
                   const firstEvidence = boardEvidence.find((evidence) =>
                     evidence.linked_conspiracy_ids.includes(caseId)
                   );
+                  setSelectedProjectId(targetCase?.project_id ?? activeProjectId);
+                  setSelectedCaseId(caseId);
                   setSelectedEvidenceId(firstEvidence?.id ?? null);
                   setActiveView("web");
                   setViewHash("web");
@@ -421,8 +600,8 @@ function AuthenticatedApp({
         {shouldShowDetail ? (
           <aside className="detail-panel">
             <EvidenceDetail
-              evidence={selectedEvidence}
-              conspiracies={conspiracies}
+              evidence={detailEvidence}
+              conspiracies={effectiveConspiracies}
               isAdminHint={isAdminHint}
               onUnlinkEvidenceFromCase={async (evidenceId, caseId) => {
                 const callable = httpsCallable<
@@ -448,8 +627,8 @@ function AuthenticatedApp({
       {mobileDetailOpen ? (
         <div className="mobile-detail-sheet">
           <EvidenceDetail
-            evidence={selectedEvidence}
-            conspiracies={conspiracies}
+            evidence={detailEvidence}
+            conspiracies={effectiveConspiracies}
             isAdminHint={isAdminHint}
             onClose={() => setMobileDetailOpen(false)}
             onUnlinkEvidenceFromCase={async (evidenceId, caseId) => {

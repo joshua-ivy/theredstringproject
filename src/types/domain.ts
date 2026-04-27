@@ -66,8 +66,24 @@ export interface Evidence {
   review_note?: string;
 }
 
+export interface Project {
+  id: string;
+  title: string;
+  summary: string;
+  credibility_avg: number;
+  case_count: number;
+  evidence_count: number;
+  string_count: number;
+  tags: string[];
+  status?: "active" | "archived";
+  last_weaved: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Conspiracy {
   id: string;
+  project_id?: string;
   title: string;
   summary: string;
   credibility_avg: number;
