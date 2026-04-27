@@ -91,7 +91,7 @@ export function RedStringBoard({
   onNewString
 }: RedStringBoardProps) {
   const [zoom, setZoom] = useState(0.78);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, setPan] = useState({ x: BOARD_MIN_X, y: BOARD_MIN_Y });
   const [boardMessage, setBoardMessage] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
   const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
@@ -325,7 +325,7 @@ export function RedStringBoard({
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
           }}
         >
-          <svg className="board-strings" viewBox={`${BOARD_MIN_X} ${BOARD_MIN_Y} ${BOARD_WIDTH} ${BOARD_HEIGHT}`} aria-hidden="true">
+          <svg className="board-strings" viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`} aria-hidden="true">
             <defs>
               <filter id="subtle-red-glow">
                 <feGaussianBlur stdDeviation="2.5" result="blur" />
@@ -341,18 +341,20 @@ export function RedStringBoard({
               if (!source || !target) {
                 return null;
               }
+              const renderedSource = { x: source.x - BOARD_MIN_X, y: source.y - BOARD_MIN_Y };
+              const renderedTarget = { x: target.x - BOARD_MIN_X, y: target.y - BOARD_MIN_Y };
               const selected = string.source === selectedEvidenceId || string.target === selectedEvidenceId;
               return (
                 <g key={string.id}>
                   <path
                     className={`red-string ${string.type} ${selected ? "selected-string" : ""}`}
-                    d={pathFor(source, target, index)}
+                    d={pathFor(renderedSource, renderedTarget, index)}
                     strokeWidth={1 + string.weight * 3.4}
                     opacity={selected ? 0.94 : 0.35 + string.weight * 0.38}
                     filter={selected || string.weight > 0.7 ? "url(#subtle-red-glow)" : undefined}
                   />
-                  <circle className="string-endpoint" cx={source.x} cy={source.y} r={2.8 + string.weight * 2.4} />
-                  <circle className="string-endpoint" cx={target.x} cy={target.y} r={2.8 + string.weight * 2.4} />
+                  <circle className="string-endpoint" cx={renderedSource.x} cy={renderedSource.y} r={2.8 + string.weight * 2.4} />
+                  <circle className="string-endpoint" cx={renderedTarget.x} cy={renderedTarget.y} r={2.8 + string.weight * 2.4} />
                 </g>
               );
             })}
@@ -367,7 +369,7 @@ export function RedStringBoard({
               <button
                 key={item.id}
                 className="case-anchor"
-                style={{ left: node.x - 90, top: node.y - 50 }}
+                style={{ left: node.x - BOARD_MIN_X - 90, top: node.y - BOARD_MIN_Y - 50 }}
                 onPointerDown={(event) => beginNodeDrag(event, item.id)}
                 onClick={(event) => event.preventDefault()}
               >
@@ -388,7 +390,7 @@ export function RedStringBoard({
               <article
                 key={item.id}
                 className={`board-note ${isSelected ? "selected" : ""}`}
-                style={{ left: node.x - 85, top: node.y - 30, transform: `rotate(${node.rotate ?? 0}deg)` }}
+                style={{ left: node.x - BOARD_MIN_X - 85, top: node.y - BOARD_MIN_Y - 30, transform: `rotate(${node.rotate ?? 0}deg)` }}
                 onPointerDown={(event) => beginNodeDrag(event, item.id)}
                 onClick={(event) => {
                   event.stopPropagation();

@@ -139,6 +139,8 @@ function AuthenticatedApp({
             updated_at: data.updated_at ? iso(data.updated_at) : undefined,
             retrieved_at: iso(data.retrieved_at),
             archived_assets: data.archived_assets ?? [],
+            supporting_sources: data.supporting_sources ?? [],
+            supporting_text: data.supporting_text,
             linked_conspiracy_ids: data.linked_conspiracy_ids ?? [],
             tags: data.tags ?? [],
             entities: data.entities ?? [],
@@ -386,6 +388,10 @@ function AuthenticatedApp({
               <EvidenceLocker
                 evidences={filteredEvidence}
                 isAdminHint={isAdminHint}
+                onDeleted={(id) => {
+                  setEvidences((current) => current.filter((evidence) => evidence.id !== id));
+                  setSelectedEvidenceId((current) => current === id ? null : current);
+                }}
                 onSelect={(id) => {
                   setSelectedEvidenceId(id);
                   setActiveView("web");
@@ -406,7 +412,14 @@ function AuthenticatedApp({
 
         {shouldShowDetail ? (
           <aside className="detail-panel">
-            <EvidenceDetail evidence={selectedEvidence} isAdminHint={isAdminHint} />
+            <EvidenceDetail
+              evidence={selectedEvidence}
+              isAdminHint={isAdminHint}
+              onDeleted={(id) => {
+                setEvidences((current) => current.filter((evidence) => evidence.id !== id));
+                setSelectedEvidenceId((current) => current === id ? null : current);
+              }}
+            />
           </aside>
         ) : null}
       </section>
@@ -418,7 +431,16 @@ function AuthenticatedApp({
       ) : null}
       {mobileDetailOpen ? (
         <div className="mobile-detail-sheet">
-          <EvidenceDetail evidence={selectedEvidence} isAdminHint={isAdminHint} onClose={() => setMobileDetailOpen(false)} />
+          <EvidenceDetail
+            evidence={selectedEvidence}
+            isAdminHint={isAdminHint}
+            onClose={() => setMobileDetailOpen(false)}
+            onDeleted={(id) => {
+              setEvidences((current) => current.filter((evidence) => evidence.id !== id));
+              setSelectedEvidenceId((current) => current === id ? null : current);
+              setMobileDetailOpen(false);
+            }}
+          />
         </div>
       ) : null}
     </main>

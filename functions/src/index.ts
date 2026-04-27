@@ -12,7 +12,7 @@ import { GoogleGenAI } from "@google/genai";
 import { load } from "cheerio";
 import { PDFParse } from "pdf-parse";
 import { z } from "zod";
-import type { AnalysisResult, ArchivedAsset, EvidenceRecord } from "./types.js";
+import type { AnalysisResult, ArchivedAsset, EvidenceRecord, SupportingSource } from "./types.js";
 import { credibilityPrompt, oraclePrompt } from "./prompts.js";
 
 initializeApp();
@@ -55,6 +55,24 @@ const deleteCaseSchema = z.object({
 const linkEvidenceSchema = z.object({
   evidenceId: z.string().min(1).max(180),
   caseId: z.string().min(1).max(180)
+});
+
+const supplementSchema = z
+  .object({
+    evidenceId: z.string().min(1).max(180),
+    urls: z.array(z.string().url()).max(10).optional(),
+    uploads: z.array(z.object({
+      storagePath: z.string().min(1).max(600),
+      sourceUrl: z.string().url().optional()
+    })).max(10).optional(),
+    notes: z.string().max(2000).optional()
+  })
+  .refine((value) => (value.urls?.length ?? 0) + (value.uploads?.length ?? 0) > 0, {
+    message: "At least one URL or upload is required."
+  });
+
+const deleteEvidenceSchema = z.object({
+  evidenceId: z.string().min(1).max(180)
 });
 
 function adminEmails() {
@@ -202,6 +220,221 @@ async function extractPdfText(bytes: Buffer) {
   } finally {
     await parser.destroy();
   }
+}
+
+function assetKindForType(type: EvidenceRecord["type"]): ArchivedAsset["kind"] {
+  if (type === "pdf") return "pdf";
+  if (type === "image") return "image";
+  return "source";
+}
+
+function fileExtensionFor(type: EvidenceRecord["type"], contentType: string, fallback = "bin") {
+  if (type === "pdf") return "pdf";
+  if (type === "image") return contentType.split("/")[1]?.split(";")[0] || fallback;
+  if (contentType.includes("html")) return "html";
+  if (contentType.includes("text")) return "txt";
+  return fallback;
+}
+
+function cleanStoragePath(path: unknown) {
+  const value = String(path ?? "").replace(/^storage:\/\//, "");
+  return value && !value.startsWith("http") && !value.startsWith("local://") ? value : "";
+}
+
+function collectAssetPaths(data: FirebaseFirestore.DocumentData) {
+  const assetPaths = new Set<string>();
+  const collect = (asset: unknown) => {
+    const path = cleanStoragePath((asset as { path?: unknown } | null)?.path);
+    if (path) assetPaths.add(path);
+  };
+
+  if (Array.isArray(data.archived_assets)) {
+    data.archived_assets.forEach(collect);
+  }
+
+  if (Array.isArray(data.supporting_sources)) {
+    data.supporting_sources.forEach((source) => {
+      if (Array.isArray(source?.archived_assets)) {
+        source.archived_assets.forEach(collect);
+      }
+      const uploadPath = cleanStoragePath(source?.storage_path);
+      if (uploadPath) assetPaths.add(uploadPath);
+    });
+  }
+
+  const mediaPath = cleanStoragePath(data.media_url);
+  if (mediaPath) assetPaths.add(mediaPath);
+  return assetPaths;
+}
+
+async function preserveSupplementUrl(evidenceId: string, rawUrl: string, notes?: string): Promise<SupportingSource> {
+  const canonicalUrl = canonicalize(rawUrl);
+  const supplementId = `supp-${sha256(canonicalUrl).slice(0, 16)}`;
+  const root = `archives/${evidenceId}/supplements/${supplementId}`;
+  const retrievedAt = new Date().toISOString();
+  const archivedAssets: ArchivedAsset[] = [];
+  let title = canonicalUrl;
+  let contentText = `Supporting source retained at ${canonicalUrl}.`;
+  let contentHash = sha256(canonicalUrl);
+  let archiveStatus: EvidenceRecord["archive_status"] = "link_only";
+  let type: EvidenceRecord["type"] = "link";
+
+  try {
+    const response = await fetchWithTimeout(canonicalUrl);
+    const contentType = response.headers.get("content-type") ?? "application/octet-stream";
+    type = evidenceTypeFromContent(contentType, canonicalUrl);
+
+    if (!response.ok) {
+      archiveStatus = response.status === 401 || response.status === 403 ? "blocked" : "failed";
+      contentText = `Automatic preservation returned HTTP ${response.status}. Source link retained for review.`;
+      archivedAssets.push(
+        await archiveJson(`${root}/metadata.json`, {
+          canonical_url: canonicalUrl,
+          retrieved_at: retrievedAt,
+          fetch_status: response.status,
+          source_hash: contentHash
+        })
+      );
+    } else {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      contentHash = sha256(bytes);
+      archiveStatus = "archived";
+
+      if (contentType.includes("html")) {
+        const html = bytes.toString("utf8");
+        const extracted = htmlToText(html);
+        title = extracted.title || canonicalUrl;
+        contentText = extracted.text || `Supporting HTML source archived from ${canonicalUrl}.`;
+        archivedAssets.push(await archiveBytes(`${root}/source.html`, bytes, contentType, "source"));
+        archivedAssets.push(await archiveText(`${root}/extracted.txt`, contentText));
+      } else {
+        title = decodeURIComponent(new URL(canonicalUrl).pathname.split("/").pop() || canonicalUrl);
+        const extension = fileExtensionFor(type, contentType);
+        archivedAssets.push(await archiveBytes(`${root}/source.${extension}`, bytes, contentType, assetKindForType(type)));
+        if (type === "pdf") {
+          try {
+            const pdfText = await extractPdfText(bytes);
+            if (pdfText) {
+              contentText = pdfText;
+              archivedAssets.push(await archiveText(`${root}/extracted.txt`, pdfText));
+            }
+          } catch (error) {
+            logger.warn("Supplement PDF extraction failed", { evidenceId, canonicalUrl, error });
+            contentText = `PDF supporting source archived from ${canonicalUrl}; text extraction failed.`;
+          }
+        } else if (type === "image") {
+          contentText = `Image supporting source archived from ${canonicalUrl}.`;
+        } else {
+          contentText = bytes.toString("utf8").replace(/\s+/g, " ").trim().slice(0, 12000) || contentText;
+          archivedAssets.push(await archiveText(`${root}/extracted.txt`, contentText));
+        }
+      }
+
+      archivedAssets.push(
+        await archiveJson(`${root}/metadata.json`, {
+          canonical_url: canonicalUrl,
+          retrieved_at: retrievedAt,
+          content_type: contentType,
+          source_hash: contentHash
+        })
+      );
+    }
+  } catch (error) {
+    logger.warn("Supplement URL preservation failed", { evidenceId, canonicalUrl, error });
+    archiveStatus = "failed";
+    contentText = "Automatic preservation failed. Source link retained for manual review.";
+    archivedAssets.push(
+      await archiveJson(`${root}/metadata.json`, {
+        canonical_url: canonicalUrl,
+        retrieved_at: retrievedAt,
+        status: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+        source_hash: contentHash
+      })
+    );
+  }
+
+  return {
+    id: supplementId,
+    kind: "url",
+    title,
+    type,
+    source_url: rawUrl,
+    canonical_url: canonicalUrl,
+    content_text: contentText.slice(0, 12000),
+    archive_status: archiveStatus,
+    archived_assets: archivedAssets,
+    content_hash: contentHash,
+    retrieved_at: retrievedAt,
+    ...(notes ? { notes } : {})
+  };
+}
+
+async function preserveSupplementUpload(
+  evidenceId: string,
+  upload: { storagePath: string; sourceUrl?: string },
+  notes?: string
+): Promise<SupportingSource> {
+  const file = bucket.file(upload.storagePath);
+  const [exists] = await file.exists();
+  if (!exists) {
+    throw new HttpsError("not-found", `Uploaded supplement was not found: ${upload.storagePath}`);
+  }
+
+  const [metadata] = await file.getMetadata();
+  const [bytes] = await file.download();
+  const contentType = metadata.contentType ?? "application/octet-stream";
+  const type = evidenceTypeFromContent(contentType, upload.storagePath);
+  const contentHash = sha256(bytes);
+  const supplementId = `supp-${sha256(`${upload.storagePath}:${contentHash}`).slice(0, 16)}`;
+  const root = `archives/${evidenceId}/supplements/${supplementId}`;
+  const originalName = String(metadata.metadata?.originalName ?? metadata.name?.split("/").pop() ?? "uploaded supplement");
+  const safeName = originalName.replace(/[^a-z0-9._-]/gi, "-").toLowerCase();
+  const extension = fileExtensionFor(type, contentType, safeName.split(".").pop() || "bin");
+  const archivePath = `${root}/source-${safeName || `upload.${extension}`}`;
+  const archivedAssets: ArchivedAsset[] = [
+    await archiveBytes(archivePath, bytes, contentType, assetKindForType(type))
+  ];
+  let contentText = `Uploaded ${type} supporting source preserved at ${archivePath}.`;
+
+  if (type === "pdf") {
+    try {
+      const pdfText = await extractPdfText(bytes);
+      if (pdfText) {
+        contentText = pdfText;
+        archivedAssets.push(await archiveText(`${root}/extracted.txt`, pdfText));
+      }
+    } catch (error) {
+      logger.warn("Uploaded supplement PDF extraction failed", { evidenceId, uploadPath: upload.storagePath, error });
+    }
+  }
+
+  archivedAssets.push(
+    await archiveJson(`${root}/metadata.json`, {
+      storage_path: upload.storagePath,
+      source_url: upload.sourceUrl ?? null,
+      retrieved_at: new Date().toISOString(),
+      content_type: contentType,
+      source_hash: contentHash,
+      original_name: originalName
+    })
+  );
+
+  return {
+    id: supplementId,
+    kind: "upload",
+    title: originalName,
+    type,
+    source_url: upload.sourceUrl ?? `storage://${archivePath}`,
+    canonical_url: upload.sourceUrl ?? `storage://${archivePath}`,
+    content_text: contentText.slice(0, 12000),
+    archive_status: "archived",
+    archived_assets: archivedAssets,
+    content_hash: contentHash,
+    retrieved_at: new Date().toISOString(),
+    storage_path: upload.storagePath,
+    ...(notes ? { notes } : {})
+  };
 }
 
 async function enqueueAnalysis(evidenceId: string) {
@@ -548,6 +781,21 @@ function scoreOracleDocument(data: FirebaseFirestore.DocumentData, terms: string
     data.credibility_explanation,
     data.source_url,
     data.canonical_url,
+    ...(Array.isArray(data.supporting_sources)
+      ? (data.supporting_sources as Array<Record<string, unknown>>).flatMap((source) => {
+          const assets = Array.isArray(source.archived_assets)
+            ? (source.archived_assets as Array<Record<string, unknown>>).map((asset) => asset.path)
+            : [];
+          return [
+            source.title,
+            source.content_text,
+            source.source_url,
+            source.canonical_url,
+            source.archive_status,
+            ...assets
+          ];
+        })
+      : []),
     data.platform,
     data.type,
     ...(Array.isArray(data.entities) ? data.entities : []),
@@ -855,6 +1103,132 @@ function chunks<T>(items: T[], size: number) {
   return groups;
 }
 
+async function recomputeCaseAggregate(caseId: string) {
+  const caseRef = db.collection("conspiracies").doc(caseId);
+  const caseSnap = await caseRef.get();
+  if (!caseSnap.exists) {
+    return;
+  }
+
+  const evidenceSnapshot = await db.collection("evidences").where("linked_conspiracy_ids", "array-contains", caseId).get();
+  const connectionSnapshot = await db.collection("connections").where("to", "==", caseId).get();
+  const scores = evidenceSnapshot.docs.map((doc) => Number(doc.data().credibility_score ?? 0)).filter((score) => Number.isFinite(score));
+  const credibility = scores.length
+    ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+    : 0;
+
+  await caseRef.update({
+    evidence_count: evidenceSnapshot.size,
+    string_count: connectionSnapshot.size,
+    credibility_avg: credibility,
+    last_weaved: FieldValue.serverTimestamp()
+  });
+}
+
+export const addEvidenceSupplements = onCall({ region: "us-central1" }, async (request) => {
+  const updatedBy = requireAdmin(request);
+  const input = supplementSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence supplement request is invalid.", input.error.flatten());
+  }
+
+  const { evidenceId, urls = [], uploads = [], notes } = input.data;
+  const evidenceRef = db.collection("evidences").doc(evidenceId);
+  const evidenceSnap = await evidenceRef.get();
+  if (!evidenceSnap.exists) {
+    throw new HttpsError("not-found", "Evidence record was not found.");
+  }
+
+  const supplements = [
+    ...(await Promise.all(urls.map((url) => preserveSupplementUrl(evidenceId, url, notes)))),
+    ...(await Promise.all(uploads.map((upload) => preserveSupplementUpload(evidenceId, upload, notes))))
+  ];
+  const current = evidenceSnap.data() ?? {};
+  const existingSupplements = Array.isArray(current.supporting_sources) ? current.supporting_sources : [];
+  const existingAssets = Array.isArray(current.archived_assets) ? current.archived_assets : [];
+  const supplementText = supplements
+    .map((source) => `[Supporting source: ${source.title}] ${source.content_text}`)
+    .join("\n\n")
+    .slice(0, 12000);
+
+  await evidenceRef.update({
+    supporting_sources: [...existingSupplements, ...supplements],
+    archived_assets: [...existingAssets, ...supplements.flatMap((source) => source.archived_assets)],
+    supporting_text: [current.supporting_text, supplementText].filter(Boolean).join("\n\n").slice(0, 24000),
+    updated_by: updatedBy,
+    updated_at: FieldValue.serverTimestamp()
+  });
+
+  return {
+    evidenceId,
+    added: supplements.length,
+    supplements: supplements.map((source) => ({
+      id: source.id,
+      title: source.title,
+      archiveStatus: source.archive_status
+    }))
+  };
+});
+
+export const deleteEvidenceRecord = onCall({ region: "us-central1" }, async (request) => {
+  const deletedBy = requireAdmin(request);
+  const input = deleteEvidenceSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence deletion request is invalid.", input.error.flatten());
+  }
+
+  const { evidenceId } = input.data;
+  const evidenceRef = db.collection("evidences").doc(evidenceId);
+  const evidenceSnap = await evidenceRef.get();
+  if (!evidenceSnap.exists) {
+    throw new HttpsError("not-found", "Evidence record was not found.");
+  }
+
+  const data = evidenceSnap.data() ?? {};
+  const caseIds = Array.isArray(data.linked_conspiracy_ids) ? data.linked_conspiracy_ids.map(String) : [];
+  const assetPaths = collectAssetPaths(data);
+  const connectionRefs = new Map<string, FirebaseFirestore.DocumentReference>();
+  const fromConnections = await db.collection("connections").where("from", "==", evidenceId).get();
+  fromConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+  const toConnections = await db.collection("connections").where("to", "==", evidenceId).get();
+  toConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+
+  const bulkWriter = db.bulkWriter();
+  bulkWriter.delete(evidenceRef);
+  connectionRefs.forEach((ref) => bulkWriter.delete(ref));
+  await bulkWriter.close();
+
+  await Promise.all(Array.from(new Set(caseIds)).map((caseId) => recomputeCaseAggregate(caseId)));
+
+  let assetsDeleted = 0;
+  await Promise.all(
+    Array.from(assetPaths).map(async (assetPath) => {
+      try {
+        await bucket.file(assetPath).delete();
+        assetsDeleted += 1;
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? Number(error.code) : 0;
+        if (code !== 404) {
+          logger.warn("Evidence asset deletion failed", { evidenceId, assetPath, error });
+        }
+      }
+    })
+  );
+
+  logger.info("Deleted evidence record", {
+    evidenceId,
+    deletedBy,
+    connectionCount: connectionRefs.size,
+    assetsDeleted
+  });
+
+  return {
+    evidenceId,
+    stringsDeleted: connectionRefs.size,
+    assetsDeleted
+  };
+});
+
 export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (request) => {
   const deletedBy = requireAdmin(request);
   const input = deleteCaseSchema.safeParse(request.data);
@@ -870,17 +1244,7 @@ export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (r
   const connectionRefs = new Map<string, FirebaseFirestore.DocumentReference>();
 
   evidenceSnapshot.docs.forEach((doc) => {
-    const data = doc.data();
-    if (Array.isArray(data.archived_assets)) {
-      data.archived_assets.forEach((asset) => {
-        const path = String(asset?.path ?? "").replace(/^storage:\/\//, "");
-        if (path && !path.startsWith("http")) assetPaths.add(path);
-      });
-    }
-    const mediaPath = String(data.media_url ?? "").replace(/^storage:\/\//, "");
-    if (mediaPath && !mediaPath.startsWith("http") && !mediaPath.startsWith("local://")) {
-      assetPaths.add(mediaPath);
-    }
+    collectAssetPaths(doc.data()).forEach((assetPath) => assetPaths.add(assetPath));
   });
 
   const caseToConnections = await db.collection("connections").where("to", "==", caseId).get();

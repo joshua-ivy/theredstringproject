@@ -1643,6 +1643,21 @@ input[type="range"] {
   border-radius: 5px;
 }
 
+.detail-mode-toggle {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.detail-mode-toggle button.active {
+  color: var(--red);
+  background: oklch(0.20 0.05 25 / 0.3);
+  border-color: var(--red-deep);
+}
+
 .secondary-source {
   color: var(--ink-1);
   background: var(--bg-2);
@@ -1665,6 +1680,46 @@ input[type="range"] {
   overflow-wrap: anywhere;
   color: var(--ink-3);
   font-size: 0.7rem;
+}
+
+.detail-empty {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 0.76rem;
+}
+
+.supporting-source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.supporting-source-list a {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  color: var(--ink-1);
+  background: oklch(0.13 0.01 30);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.supporting-source-list a:hover {
+  border-color: var(--red-deep);
+}
+
+.supporting-source-list span,
+.supporting-source-list em {
+  color: var(--ink-3);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.62rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.supporting-source-list strong {
+  color: var(--ink-0);
+  font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 .locker-view,
@@ -2278,6 +2333,50 @@ input[type="range"] {
   color: var(--green);
   font-family: var(--font-mono), monospace;
   font-size: 0.72rem;
+}
+
+.selected-upload-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.selected-upload-list span {
+  padding: 4px 7px;
+  color: var(--ink-2);
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.64rem;
+}
+
+.danger-zone {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  background: oklch(0.17 0.05 25 / 0.3);
+  border: 1px solid oklch(0.45 0.16 25 / 0.42);
+  border-radius: 6px;
+}
+
+.danger-zone h3,
+.danger-zone p {
+  margin: 0;
+}
+
+.danger-zone h3 {
+  color: var(--red);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.danger-zone p,
+.danger-zone span {
+  color: var(--ink-2);
+  font-size: 0.74rem;
 }
 
 .citation-list {
@@ -3079,6 +3178,34 @@ input[type="range"] {
   font-size: 9.5px;
   letter-spacing: 0.10em;
   text-transform: uppercase;
+}
+
+.locker-row-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.locker-row-actions a,
+.locker-row-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--ink-2);
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.locker-row-actions button {
+  color: var(--red);
+  cursor: pointer;
+}
+
+.locker-row-actions a:hover,
+.locker-row-actions button:hover {
+  border-color: var(--red-deep);
 }
 
 .locker-score-grid {

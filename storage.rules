@@ -21,6 +21,12 @@ service firebase.storage {
         && request.resource.size < 50 * 1024 * 1024;
     }
 
+    match /pending-supplements/{uid}/{allPaths=**} {
+      allow read: if signedIn() && (request.auth.uid == uid || admin());
+      allow write: if signedIn() && request.auth.uid == uid && admin()
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

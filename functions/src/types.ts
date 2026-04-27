@@ -15,6 +15,22 @@ export interface ArchivedAsset {
   hash?: string;
 }
 
+export interface SupportingSource {
+  id: string;
+  kind: "url" | "upload";
+  title: string;
+  type: EvidenceType;
+  source_url: string;
+  canonical_url: string;
+  content_text: string;
+  archive_status: ArchiveStatus;
+  archived_assets: ArchivedAsset[];
+  content_hash: string;
+  retrieved_at: string;
+  notes?: string;
+  storage_path?: string;
+}
+
 export interface EvidenceRecord {
   title: string;
   type: EvidenceType;
@@ -31,6 +47,7 @@ export interface EvidenceRecord {
   tags: string[];
   archive_status: ArchiveStatus;
   archived_assets: ArchivedAsset[];
+  supporting_sources?: SupportingSource[];
   content_hash: string;
   linked_conspiracy_ids: string[];
   retrieved_at: FirebaseFirestore.FieldValue | string;

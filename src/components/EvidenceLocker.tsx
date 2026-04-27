@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytesResumable } from "firebase/storage";
-import { ExternalLink, FileUp, Loader2, Send, Upload } from "lucide-react";
+import { ExternalLink, FileUp, Loader2, Send, Trash2, Upload } from "lucide-react";
 import { auth, functions, storage } from "@/lib/firebase";
 import type { Evidence } from "@/types/domain";
 
@@ -11,6 +11,7 @@ interface EvidenceLockerProps {
   evidences: Evidence[];
   isAdminHint: boolean;
   onSelect: (id: string) => void;
+  onDeleted?: (id: string) => void;
 }
 
 type FilterKey = "all" | "approved" | "review";
@@ -58,7 +59,7 @@ function CredibilityBuckets({ evidences }: { evidences: Evidence[] }) {
   );
 }
 
-export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLockerProps) {
+export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: EvidenceLockerProps) {
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState("");
@@ -69,6 +70,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
   const [filter, setFilter] = useState<FilterKey>("all");
   const [sortMode, setSortMode] = useState<LockerSort>("credibility");
   const [initialCredibility, setInitialCredibility] = useState<"low" | "med" | "high" | "auto">("auto");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filteredEvidence = useMemo(() => {
     if (filter === "approved") {
@@ -171,6 +173,27 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
       setMessage(error instanceof Error ? error.message : "Upload failed. Check custom admin claims and Storage rules.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function deleteEvidence(evidence: Evidence) {
+    const confirmed = window.confirm(`Delete "${evidence.title}" and its archived assets? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingId(evidence.id);
+    setMessage(null);
+    try {
+      const callable = httpsCallable<{ evidenceId: string }, { evidenceId: string; stringsDeleted: number; assetsDeleted: number }>(
+        functions,
+        "deleteEvidenceRecord"
+      );
+      const result = await callable({ evidenceId: evidence.id });
+      setMessage(`Deleted ${evidence.title}. Removed ${result.data.stringsDeleted} strings and ${result.data.assetsDeleted} archived assets.`);
+      onDeleted?.(evidence.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Evidence deletion failed.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -304,9 +327,23 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect }: EvidenceLoc
                     {evidence.tags.slice(0, 5).map((tag) => <span key={tag}>{tag}</span>)}
                   </div>
                 </div>
-                <a href={evidence.source_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-                  <ExternalLink size={14} />
-                </a>
+                <div className="locker-row-actions">
+                  <a href={evidence.source_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} title="Open source">
+                    <ExternalLink size={14} />
+                  </a>
+                  {isAdminHint ? (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void deleteEvidence(evidence);
+                      }}
+                      disabled={deletingId === evidence.id}
+                      title="Delete evidence"
+                    >
+                      {deletingId === evidence.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                    </button>
+                  ) : null}
+                </div>
               </article>
             );
           })}
