@@ -120,6 +120,54 @@ function questionKey(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+const ORACLE_SECTION_PATTERN = /^(Short answer|What the archive actually shows|Connection readout|What does not follow yet|Next evidence to pull):?$/i;
+const ORACLE_SECTION_WITH_TEXT_PATTERN = /^(?:\*\*)?(Short answer|What the archive actually shows|Connection readout|What does not follow yet|Next evidence to pull)(?:\*\*)?:\s*(.+)$/i;
+
+function renderOracleInline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function OracleAnswerBody({ text }: { text: string }) {
+  const lines = text
+    .replace(/\r/g, "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="oracle-answer-body">
+      {lines.map((line, index) => {
+        const cleaned = line.replace(/^#{1,6}\s*/, "").trim();
+        const sectionWithText = cleaned.match(ORACLE_SECTION_WITH_TEXT_PATTERN);
+        if (sectionWithText) {
+          return (
+            <div className="oracle-answer-section" key={`${line}-${index}`}>
+              <h4>{sectionWithText[1]}</h4>
+              <p>{renderOracleInline(sectionWithText[2])}</p>
+            </div>
+          );
+        }
+
+        const heading = cleaned.replace(/^\*\*(.+)\*\*$/, "$1").trim();
+        if (ORACLE_SECTION_PATTERN.test(heading)) {
+          return <h4 key={`${line}-${index}`}>{heading.replace(/:$/, "")}</h4>;
+        }
+
+        if (/^[-*]\s+/.test(cleaned)) {
+          return <p className="oracle-answer-bullet" key={`${line}-${index}`}>{renderOracleInline(cleaned.replace(/^[-*]\s+/, ""))}</p>;
+        }
+
+        return <p key={`${line}-${index}`}>{renderOracleInline(cleaned)}</p>;
+      })}
+    </div>
+  );
+}
+
 export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
   const [question, setQuestion] = useState("");
   const [credibilityMin, setCredibilityMin] = useState(55);
@@ -266,7 +314,7 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
               <Sparkles size={18} />
               <h3>Answer</h3>
             </div>
-            <p>{answer.answer}</p>
+            <OracleAnswerBody text={answer.answer} />
             {answer.intakeCards?.length ? (
               <div className="oracle-intake-list">
                 {answer.intakeCards.map((card) => (
@@ -302,7 +350,7 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
               {answer.citations.map((citation) => (
                 <a key={citation.evidenceId} href={citation.sourceUrl} target="_blank" rel="noreferrer">
                   <strong>{citation.title}</strong>
-                  <span>{citation.credibility}/100 · {citation.archiveStatus}</span>
+                  <span>{citation.credibility}/100 / {citation.archiveStatus}</span>
                 </a>
               ))}
             </div>

@@ -937,6 +937,127 @@ function buildIntakeCards(candidates: Array<FirebaseFirestore.DocumentData & { i
   });
 }
 
+function compactValue(value: unknown, maxLength = 1200) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function listValue(value: unknown, maxItems = 12) {
+  if (!Array.isArray(value)) return "none";
+  const items = value.map((item) => String(item).trim()).filter(Boolean).slice(0, maxItems);
+  return items.length ? items.join(", ") : "none";
+}
+
+function archivedAssetsValue(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return "none";
+  return value
+    .map((asset) => {
+      if (!asset || typeof asset !== "object") return "";
+      const record = asset as Record<string, unknown>;
+      return [record.kind, record.path, record.contentType].map((part) => String(part ?? "").trim()).filter(Boolean).join(" / ");
+    })
+    .filter(Boolean)
+    .slice(0, 8)
+    .join("; ") || "none";
+}
+
+function supportingSourcesValue(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return "none";
+  return value
+    .map((source, index) => {
+      if (!source || typeof source !== "object") return "";
+      const record = source as Record<string, unknown>;
+      return [
+        `supporting ${index + 1}: ${compactValue(record.title, 120) || "untitled"}`,
+        `url=${compactValue(record.source_url || record.canonical_url, 260) || "none"}`,
+        `archive=${compactValue(record.archive_status, 40) || "unknown"}`,
+        `text=${compactValue(record.content_text, 900) || "none"}`,
+        `assets=${archivedAssetsValue(record.archived_assets)}`
+      ].join("\n  ");
+    })
+    .filter(Boolean)
+    .slice(0, 5)
+    .join("\n");
+}
+
+function evidenceContextBlock(item: FirebaseFirestore.DocumentData & { id: string }, index: number) {
+  const calibrated = calibratedCredibility(item);
+  const sourceUrl = compactValue(item.source_url || item.canonical_url, 500);
+  const canonicalUrl = compactValue(item.canonical_url || item.source_url, 500);
+  const linkedCases = listValue(item.linked_conspiracy_ids, 20);
+  const breakdown = item.credibility_breakdown && typeof item.credibility_breakdown === "object"
+    ? JSON.stringify(item.credibility_breakdown)
+    : "none";
+  return [
+    `[${index + 1}] ${compactValue(item.title, 180) || "Untitled evidence"}`,
+    `Evidence ID: ${item.id}`,
+    `Raw credibility score: ${Math.max(0, Math.min(100, Number(item.credibility_score ?? 0)))}/100`,
+    `Calibrated source score: ${calibrated.score}/100`,
+    `Calibrated basis: ${calibrated.basis}`,
+    `Platform/type: ${compactValue(item.platform, 80) || "unknown"} / ${compactValue(item.type, 80) || "unknown"}`,
+    `Source URL: ${sourceUrl || "none"}`,
+    `Canonical URL: ${canonicalUrl || "none"}`,
+    `Archive status: ${compactValue(item.archive_status, 80) || "unknown"}`,
+    `Review status: ${compactValue(item.review_status, 80) || "unknown"}`,
+    `Linked case IDs: ${linkedCases}`,
+    `Entities: ${listValue(item.entities, 24)}`,
+    `Tags: ${listValue(item.tags, 24)}`,
+    `Manipulation flags: ${listValue(item.manipulation_flags, 12)}`,
+    `Credibility breakdown: ${breakdown}`,
+    `Credibility explanation: ${compactValue(item.credibility_explanation, 2200) || "none"}`,
+    `Admin/review notes: ${compactValue(item.notes || item.review_note || item.credibility_review_note, 1400) || "none"}`,
+    `Archived assets: ${archivedAssetsValue(item.archived_assets)}`,
+    `Supporting text: ${compactValue(item.supporting_text, 2600) || "none"}`,
+    `Supporting sources:\n  ${supportingSourcesValue(item.supporting_sources)}`,
+    `Main extracted/source text: ${compactValue(item.content_text, 5200) || "none"}`
+  ].join("\n");
+}
+
+function questionTermCoverage(terms: string[], candidates: Array<FirebaseFirestore.DocumentData & { id: string }>) {
+  const haystack = candidates
+    .map((item) => [
+      item.title,
+      item.content_text,
+      item.supporting_text,
+      item.credibility_explanation,
+      item.source_url,
+      item.canonical_url,
+      ...(Array.isArray(item.entities) ? item.entities : []),
+      ...(Array.isArray(item.tags) ? item.tags : []),
+      ...(Array.isArray(item.supporting_sources)
+        ? (item.supporting_sources as Array<Record<string, unknown>>).flatMap((source) => [
+            source.title,
+            source.content_text,
+            source.source_url,
+            source.canonical_url
+          ])
+        : [])
+    ].join(" "))
+    .join(" ")
+    .toLowerCase();
+  return Array.from(new Set(terms.filter((term) => !haystack.includes(term.toLowerCase())))).slice(0, 10);
+}
+
+function retrievalFallbackAnswer(
+  candidates: Array<FirebaseFirestore.DocumentData & { id: string }>,
+  asksForConnection: boolean,
+  credibilityMin: number,
+  previousCount: number
+) {
+  if (candidates.length === 0) {
+    return `Short answer:\nNo specific preserved evidence matched the question at credibility >= ${credibilityMin}.\n\nWhat the archive actually shows:\nThe current retrieval set is empty at that threshold, so I cannot cite a preserved source.\n\nConnection readout:\nNo string should be drawn from this answer.\n\nWhat does not follow yet:\nThe archive still needs a specific source URL, archived asset, or exact record that matches the query.\n\nNext evidence to pull:\n- Add the exact source URL or archived image/PDF.\n- Lower the threshold only for discovery, then manually review before connecting.\n- Add tags/entities that match the question terms.`;
+  }
+
+  const titles = candidates.map((item) => `${compactValue(item.title, 120)} (${calibratedCredibility(item).score}/100)`).join("; ");
+  const repeated = previousCount > 0 ? " This is a follow-up to a prior Oracle answer, so treat the cards below as intake targets rather than a repeated conclusion." : "";
+  const connectionLine = asksForConnection
+    ? "The retrieved set is useful as intake material, but a connection still needs at least two independent cited records or one record that explicitly documents the relationship."
+    : "The retrieved set gives relevant preserved records, but Gemini reasoning was unavailable for deeper synthesis.";
+  return `Short answer:\nGemini could not complete the reasoning step, so this is a strict retrieval summary over matching preserved evidence.${repeated}\n\nWhat the archive actually shows:\nMatched records: ${titles}.\n\nConnection readout:\n${connectionLine}\n\nWhat does not follow yet:\nDo not treat retrieval similarity as proof. Review the exact source text and archive status before promoting a string.\n\nNext evidence to pull:\n- Open the intake cards below and verify each URL.\n- Add a second independent source for any claimed connection.\n- Add admin notes explaining why the record belongs under the selected case.`;
+}
+
 function insufficientConnectionAnswer(count: number, credibilityMin: number, priorCount: number) {
   if (count === 0) {
     return "No specific preserved evidence matched the question at the requested credibility threshold.";
@@ -954,11 +1075,12 @@ function insufficientConnectionAnswer(count: number, credibilityMin: number, pri
 }
 
 async function keywordEvidenceFallback(question: string, credibilityMin: number) {
-  const snapshot = await db.collection("evidences").where("credibility_score", ">=", credibilityMin).limit(60).get();
+  const snapshot = await db.collection("evidences").limit(100).get();
   const terms = oracleTerms(question);
   const ranked = snapshot.docs
-    .map((doc) => ({ doc, score: scoreOracleDocument(doc.data(), terms) }))
-    .sort((a, b) => b.score - a.score || Number(b.doc.data().credibility_score ?? 0) - Number(a.doc.data().credibility_score ?? 0));
+    .map((doc) => ({ doc, score: scoreOracleDocument(doc.data(), terms), calibrated: calibratedCredibility(doc.data()).score }))
+    .filter((item) => Math.max(Number(item.doc.data().credibility_score ?? 0), item.calibrated) >= credibilityMin)
+    .sort((a, b) => b.score - a.score || b.calibrated - a.calibrated);
   const matches = ranked.filter((item) => item.score > 0);
   return matches.map((item) => item.doc).slice(0, 8);
 }
@@ -1653,54 +1775,64 @@ export const oracleAsk = onCall(
     }
 
     const vectorDocs = queryEmbedding.length ? await findSimilarEvidence("__oracle__", queryEmbedding) : [];
-    const fallbackDocs = vectorDocs.length < 3 ? await keywordEvidenceFallback(question, credibilityMin) : [];
+    const fallbackDocs = await keywordEvidenceFallback(question, credibilityMin);
     const evidenceDocs = mergeEvidenceDocs(...vectorDocs, ...fallbackDocs);
     const terms = oracleTerms(question);
     const asksForConnection = /\b(connect|connecting|connection|link|links|between|across|relat|thread|string)\b/i.test(question);
 
     const candidates = evidenceDocs
       .map((doc): FirebaseFirestore.DocumentData & { id: string } => ({ id: doc.id, ...doc.data() }))
-      .filter((doc) => Number(doc.credibility_score ?? 0) >= credibilityMin)
+      .filter((doc) => Math.max(Number(doc.credibility_score ?? 0), calibratedCredibility(doc).score) >= credibilityMin)
       .map((doc): FirebaseFirestore.DocumentData & { id: string; oracle_score: number } => ({
         ...doc,
         oracle_score: scoreOracleDocument(doc, terms)
       }))
       .filter((doc) => Number(doc.oracle_score ?? 0) > 0)
       .filter(hasSpecificEvidenceSource)
-      .slice(0, 8);
+      .sort(
+        (a, b) =>
+          Number(b.oracle_score ?? 0) - Number(a.oracle_score ?? 0) ||
+          calibratedCredibility(b).score - calibratedCredibility(a).score
+      )
+      .slice(0, 10);
 
     const linkedCaseCount = new Set(
       candidates.flatMap((item) => Array.isArray(item.linked_conspiracy_ids) ? item.linked_conspiracy_ids.map(String) : [])
     ).size;
     const intakeCards = buildIntakeCards(candidates, asksForConnection, previousAnswers.length);
+    const missingTerms = questionTermCoverage(terms, candidates);
+    const connectionNote = asksForConnection
+      ? candidates.length < 2
+        ? `Only ${candidates.length} matching preserved evidence record met the retrieval threshold. Treat it as a seed/intake item unless it explicitly documents the requested relationship.`
+        : linkedCaseCount < 2
+          ? `The retrieved evidence is linked to ${linkedCaseCount} case cluster(s). Do not call this a cross-case connection unless the text itself documents that relationship.`
+          : `The retrieved evidence spans ${linkedCaseCount} linked case cluster(s). Still distinguish source provenance from claim interpretation.`
+      : "";
 
     const context = candidates
-      .map(
-        (item, index) =>
-          `[${index + 1}] ${item.title}\nCredibility: ${item.credibility_score}/100\nSource: ${item.source_url}\nArchive: ${item.archive_status}\n${item.content_text}`
-      )
+      .map((item, index) => evidenceContextBlock(item, index))
       .join("\n\n");
 
     let answer = "No preserved evidence matched the question at the requested credibility threshold.";
-    if (asksForConnection && (candidates.length < 2 || linkedCaseCount < 2)) {
-      answer = insufficientConnectionAnswer(candidates.length, credibilityMin, previousAnswers.length);
-    } else if (context) {
+    if (context) {
       if (apiKey) {
         try {
           const ai = new GoogleGenAI({ apiKey });
           const response = await ai.models.generateContent({
             model: GEMINI_TEXT_MODEL,
-            contents: oraclePrompt({ question, credibilityMin, context, previousAnswers }),
-            config: { temperature: 0.2 }
+            contents: oraclePrompt({ question, credibilityMin, context, previousAnswers, connectionNote, missingTerms }),
+            config: { temperature: previousAnswers.length ? 0.45 : 0.32, topP: 0.9 }
           });
           answer = response.text ?? answer;
         } catch (error) {
           logger.error("Oracle Gemini answer failed; returning retrieval summary", { error });
-          answer = "Gemini could not complete the reasoning step, so this is a retrieval summary over matching preserved evidence.";
+          answer = retrievalFallbackAnswer(candidates, asksForConnection, credibilityMin, previousAnswers.length);
         }
       } else {
-        answer = "Gemini is not configured, so this answer is a retrieval summary over matching preserved evidence.";
+        answer = retrievalFallbackAnswer(candidates, asksForConnection, credibilityMin, previousAnswers.length);
       }
+    } else if (asksForConnection) {
+      answer = insufficientConnectionAnswer(candidates.length, credibilityMin, previousAnswers.length);
     }
 
     return {

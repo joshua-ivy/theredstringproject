@@ -2445,6 +2445,57 @@ input[type="range"] {
   line-height: 1.68;
 }
 
+.oracle-answer-body {
+  display: grid;
+  gap: 11px;
+  max-width: min(100%, 1120px);
+  margin-top: 8px;
+}
+
+.oracle-answer-body h4 {
+  margin: 14px 0 0;
+  color: var(--amber);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.oracle-answer-body p {
+  margin: 0;
+  color: var(--ink-0);
+  font-size: 0.96rem;
+  line-height: 1.72;
+}
+
+.oracle-answer-body strong {
+  color: white;
+  font-weight: 800;
+}
+
+.oracle-answer-section {
+  display: grid;
+  gap: 7px;
+}
+
+.oracle-answer-bullet {
+  position: relative;
+  padding-left: 16px;
+}
+
+.oracle-answer-bullet::before {
+  position: absolute;
+  top: 0.78em;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  content: "";
+  background: var(--red);
+  border-radius: 999px;
+  box-shadow: 0 0 12px oklch(0.62 0.25 25 / 0.55);
+}
+
 .oracle-intake-list {
   display: grid;
   gap: 12px;
