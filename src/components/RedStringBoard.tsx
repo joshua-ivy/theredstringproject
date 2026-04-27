@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Plus, ZoomIn, ZoomOut } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 interface RedStringBoardProps {
@@ -35,6 +35,7 @@ interface BoardString {
   type: string;
 }
 
+const BOARD_STORAGE_KEY = "red-string-board-node-positions-v1";
 const BOARD_MIN_X = -900;
 const BOARD_MIN_Y = -220;
 const BOARD_MAX_X = 3200;
@@ -42,38 +43,29 @@ const BOARD_MAX_Y = 1420;
 const BOARD_WIDTH = BOARD_MAX_X - BOARD_MIN_X;
 const BOARD_HEIGHT = BOARD_MAX_Y - BOARD_MIN_Y;
 
-const evidenceSlotById: Record<string, { x: number; y: number; rotate: number }> = {
-  "evidence-church-hearings": { x: 540, y: 230, rotate: -4 },
-  "evidence-national-archives": { x: 290, y: 285, rotate: 2 },
-  "evidence-uap-testimony": { x: 580, y: 540, rotate: -1 },
-  "evidence-declassified-memo": { x: 870, y: 200, rotate: 3 },
-  "evidence-social-claim": { x: 950, y: 470, rotate: -2 },
-  "evidence-rss-news": { x: 220, y: 460, rotate: -2 }
-};
-
-const fallbackEvidenceSlots = [
-  { x: 540, y: 230, rotate: -4 },
-  { x: 290, y: 285, rotate: 2 },
-  { x: 580, y: 540, rotate: -1 },
-  { x: 870, y: 200, rotate: 3 },
-  { x: 950, y: 470, rotate: -2 },
-  { x: 220, y: 460, rotate: -2 },
-  { x: 1110, y: 310, rotate: 2 },
-  { x: 720, y: 650, rotate: -3 },
-  { x: 1420, y: 420, rotate: -2 },
-  { x: 1680, y: 590, rotate: 3 },
-  { x: 1980, y: 340, rotate: -1 },
-  { x: 2260, y: 690, rotate: 2 }
-];
-
-const caseSlotById: Record<string, { x: number; y: number }> = {
-  "case-mkultra": { x: 410, y: 360 },
-  "case-uap": { x: 760, y: 380 },
-  "case-election-media": { x: 1080, y: 600 }
-};
-
 function hashNumber(value: string) {
   return [...value].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function storedNode(value: unknown): value is BoardNode {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<BoardNode>;
+  return (
+    typeof candidate.id === "string" &&
+    (candidate.kind === "evidence" || candidate.kind === "case") &&
+    typeof candidate.x === "number" &&
+    typeof candidate.y === "number"
+  );
+}
+
+function readStoredPositions() {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BOARD_STORAGE_KEY) ?? "{}") as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => storedNode(value))) as Record<string, BoardNode>;
+  } catch {
+    return {};
+  }
 }
 
 function shortTitle(value: string, max = 46) {
@@ -96,20 +88,28 @@ export function RedStringBoard({
   const [pan, setPan] = useState({ x: BOARD_MIN_X, y: BOARD_MIN_Y });
   const [boardMessage, setBoardMessage] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
-  const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
+  const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>(() => readStoredPositions());
   const [drag, setDrag] = useState<
     | { mode: "pan"; startX: number; startY: number; originX: number; originY: number }
     | { mode: "node"; id: string; startX: number; startY: number; originX: number; originY: number }
     | null
   >(null);
 
+  useEffect(() => {
+    window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(nodePositions));
+  }, [nodePositions]);
+
   const baseNodes = useMemo(() => {
     const nodes: BoardNode[] = [];
+    const casePositions = new Map<string, { x: number; y: number }>();
+    const filedCounts = new Map<string, number>();
+    let unfiledIndex = 0;
 
     conspiracies.forEach((item, index) => {
-      const column = index % 7;
-      const row = Math.floor(index / 7);
-      const slot = caseSlotById[item.id] ?? { x: 410 + column * 320, y: 360 + row * 210 + (index % 2) * 80 };
+      const column = index % 4;
+      const row = Math.floor(index / 4);
+      const slot = { x: 320 + column * 520, y: 430 + row * 360 };
+      casePositions.set(item.id, slot);
       nodes.push({
         id: item.id,
         kind: "case",
@@ -118,15 +118,36 @@ export function RedStringBoard({
       });
     });
 
-    evidences.forEach((item, index) => {
-      const slot = evidenceSlotById[item.id] ?? fallbackEvidenceSlots[index % fallbackEvidenceSlots.length];
-      const ring = Math.floor(index / fallbackEvidenceSlots.length);
+    evidences.forEach((item) => {
+      const primaryCaseId = item.linked_conspiracy_ids.find((caseId) => casePositions.has(caseId));
+      const caseSlot = primaryCaseId ? casePositions.get(primaryCaseId) : null;
+      const filedIndex = primaryCaseId ? filedCounts.get(primaryCaseId) ?? 0 : unfiledIndex;
+      if (primaryCaseId) {
+        filedCounts.set(primaryCaseId, filedIndex + 1);
+      } else {
+        unfiledIndex += 1;
+      }
+
+      const lane = filedIndex % 2 === 0 ? -220 : 220;
+      const spread = Math.floor(filedIndex / 2);
+      const side = spread % 2 === 0 ? -1 : 1;
+      const orbit = Math.floor(spread / 2);
+      const slot = caseSlot
+        ? {
+            x: caseSlot.x + side * (210 + orbit * 220),
+            y: caseSlot.y + lane + Math.floor(filedIndex / 8) * 180
+          }
+        : {
+            x: 260 + (filedIndex % 6) * 330,
+            y: 920 + Math.floor(filedIndex / 6) * 180
+          };
+
       nodes.push({
         id: item.id,
         kind: "evidence",
-        x: Math.min(BOARD_MAX_X - 160, slot.x + ring * 96),
-        y: Math.min(BOARD_MAX_Y - 120, slot.y + ring * 64),
-        rotate: slot.rotate + (hashNumber(item.id) % 3) - 1
+        x: Math.max(BOARD_MIN_X + 140, Math.min(BOARD_MAX_X - 170, slot.x)),
+        y: Math.max(BOARD_MIN_Y + 120, Math.min(BOARD_MAX_Y - 140, slot.y)),
+        rotate: (hashNumber(item.id) % 5) - 2
       });
     });
 
@@ -350,6 +371,16 @@ export function RedStringBoard({
         <span>{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom((value) => Math.min(1.6, value + 0.1))} title="Zoom in">
           <ZoomIn size={14} />
+        </button>
+        <button
+          onClick={() => {
+            setNodePositions({});
+            window.localStorage.removeItem(BOARD_STORAGE_KEY);
+            setBoardMessage("Board layout reset to the clean default.");
+          }}
+          title="Reset saved board layout"
+        >
+          <RotateCcw size={14} />
         </button>
       </div>
 
