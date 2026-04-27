@@ -48,15 +48,20 @@ export function oraclePrompt(input: {
   question: string;
   credibilityMin: number;
   context: string;
+  previousAnswers?: string[];
 }) {
   return `You are The Oracle, a RAG assistant for The Red String Project.
 
 Answer only from the provided preserved evidence context. Keep uncertainty visible. Cite the evidence titles in prose. If the evidence does not support a connection, say so.
 Do not infer a connection from plural wording, topic similarity, or vibe. A connection requires at least two cited evidence records or one record that explicitly documents the relationship being asked about.
 Never treat a generic platform root URL as evidence. Prefer specific hearing pages, transcripts, documents, articles, archived assets, or exact media URLs.
+If previous answers are supplied, do not repeat the same wording. Acknowledge what was already surfaced and add a new useful angle, limitation, or next evidence target.
 
 Question: ${input.question}
 Minimum credibility requested: ${input.credibilityMin}
+
+Previous Oracle answers in this admin session:
+${input.previousAnswers?.length ? input.previousAnswers.map((answer, index) => `[${index + 1}] ${answer}`).join("\n\n") : "none"}
 
 Evidence context:
 ${input.context}

@@ -30,7 +30,7 @@ const cases = [
     title: "UAP Disclosure",
     summary:
       "Statements, imagery, and testimony related to unidentified anomalous phenomena and defense-program secrecy.",
-    credibility_avg: 68,
+    credibility_avg: 84,
     evidence_count: 1,
     string_count: 1,
     tags: ["uap", "defense", "testimony"]
@@ -83,9 +83,9 @@ const evidences = [
     canonical_url: "https://docs.house.gov/meetings/GO/GO06/20230726/116282/HHRG-118-GO06-Transcript-20230726.pdf",
     content_text:
       "Official transcript for the July 26, 2023 House Oversight hearing on Unidentified Anomalous Phenomena, including testimony from Ryan Graves, David Fravor, and David Grusch about UAP reporting, safety concerns, and alleged retrieval programs.",
-    credibility_score: 72,
+    credibility_score: 84,
     credibility_explanation:
-      "Primary government transcript with named witnesses and stable provenance. It documents sworn testimony, but the underlying claims still require independent corroborating records.",
+      "Official House transcript with stable .gov provenance and named witnesses. It is highly credible evidence that the testimony occurred, while the claims inside the testimony still require independent corroborating records.",
     entities: ["UAP", "House Oversight", "Ryan Graves", "David Fravor", "David Grusch", "DoD"],
     tags: ["uap", "testimony", "house-oversight", "transcript"],
     archive_status: "link_only",
@@ -116,7 +116,7 @@ const connections = [
     from: "evidence-uap-hearing",
     to: "case-uap",
     type: "supports",
-    weight: 0.72,
+    weight: 0.84,
     ai_reason: "The official House transcript documents public UAP testimony, while the factual claims inside that testimony still need corroborating records."
   }
 ];

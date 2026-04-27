@@ -2,8 +2,9 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { Archive, ChevronRight, FileText, Filter, FolderOpen, Loader2, Plus, X } from "lucide-react";
-import { db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { Archive, ChevronRight, FileText, Filter, FolderOpen, Loader2, Plus, Trash2, X } from "lucide-react";
+import { db, functions } from "@/lib/firebase";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
 interface CaseFilesProps {
@@ -108,6 +109,7 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
   const [sortMode, setSortMode] = useState<CaseSortMode>("heat");
   const [showArchived, setShowArchived] = useState(false);
   const [documentCase, setDocumentCase] = useState<Conspiracy | null>(null);
+  const [deleteCase, setDeleteCase] = useState<Conspiracy | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [caseTitle, setCaseTitle] = useState("");
   const [caseSummary, setCaseSummary] = useState("");
@@ -181,6 +183,33 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
     }
   }
 
+  async function confirmDeleteCase() {
+    if (!deleteCase) return;
+    if (!isAdminHint) {
+      setCaseMessage("Case deletion is admin-only.");
+      return;
+    }
+
+    setCaseBusy(true);
+    setCaseMessage(null);
+    try {
+      const callable = httpsCallable<
+        { caseId: string },
+        { caseId: string; evidenceDeleted: number; stringsDeleted: number; assetsDeleted: number }
+      >(functions, "deleteCaseWithEvidence");
+      const result = await callable({ caseId: deleteCase.id });
+      setCaseMessage(
+        `Deleted ${deleteCase.title}: ${result.data.evidenceDeleted} evidence record(s), ${result.data.stringsDeleted} string(s), ${result.data.assetsDeleted} archived asset(s).`
+      );
+      setDeleteCase(null);
+      setDocumentCase((current) => current?.id === deleteCase.id ? null : current);
+    } catch (error) {
+      setCaseMessage(error instanceof Error ? error.message : "Case could not be deleted.");
+    } finally {
+      setCaseBusy(false);
+    }
+  }
+
   return (
     <div className="case-screen exact-screen">
       <div className="screen-toolbar">
@@ -243,11 +272,20 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
                 ))}
               </div>
 
-              <div className="case-card-actions">
+              <div className={`case-card-actions ${isAdminHint ? "with-delete" : ""}`}>
                 <button onClick={() => onOpenCase(item.id)}>
                   Open on board <ChevronRight size={12} />
                 </button>
                 <button title="Case document" onClick={() => setDocumentCase(item)}><FileText size={12} /></button>
+                {isAdminHint ? (
+                  <button
+                    className="case-delete-button"
+                    title="Delete case and linked evidence"
+                    onClick={() => setDeleteCase(item)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                ) : null}
               </div>
             </article>
           );
@@ -331,6 +369,41 @@ export function CaseFiles({ conspiracies, evidences, connections, isAdminHint, o
             <button className="primary-button" onClick={() => onOpenCase(documentCase.id)}>
               Open on board <ChevronRight size={14} />
             </button>
+          </section>
+        </div>
+      ) : null}
+
+      {deleteCase ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteCase(null)}>
+          <section className="case-modal case-document-modal" role="dialog" aria-modal="true" aria-labelledby="delete-case-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setDeleteCase(null)} title="Close delete case">
+              <X size={16} />
+            </button>
+            <p className="red-label">Destructive action</p>
+            <h2 id="delete-case-title">Delete this case and its evidence?</h2>
+            <p>
+              This will delete <strong>{deleteCase.title}</strong>, every string connected to it, and every evidence record currently linked to this case.
+              Archived source files attached to those evidence records will also be removed when possible.
+            </p>
+            <div className="case-document-grid">
+              <span><strong>{evidences.filter((evidence) => evidence.linked_conspiracy_ids.includes(deleteCase.id)).length}</strong>linked evidence</span>
+              <span><strong>{connections.filter((connection) => connection.to === deleteCase.id || connection.from === deleteCase.id).length}</strong>direct strings</span>
+              <span><strong>{deleteCase.credibility_avg}</strong>avg credibility</span>
+            </div>
+            {isAdminHint ? (
+              <div className="modal-action-row">
+                <button className="secondary-button" onClick={() => setDeleteCase(null)} disabled={caseBusy}>Cancel</button>
+                <button className="danger-confirm-button" onClick={() => void confirmDeleteCase()} disabled={caseBusy}>
+                  {caseBusy ? <Loader2 className="spin" size={15} /> : <Trash2 size={14} />}
+                  Delete case and evidence
+                </button>
+              </div>
+            ) : (
+              <div className="admin-only-panel">
+                <p className="red-label">Admin-only</p>
+                <span>Public visitors can browse case files, but only the approved admin account can delete cases or evidence.</span>
+              </div>
+            )}
           </section>
         </div>
       ) : null}

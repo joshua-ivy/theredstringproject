@@ -75,6 +75,17 @@ export interface OracleCitation {
   credibility: number;
 }
 
+export interface OracleIntakeCard {
+  evidenceId: string;
+  title: string;
+  url: string;
+  tags: string[];
+  intakeNotes: string;
+  initialCredibility: number;
+  credibilityBasis: string;
+  archiveStatus: ArchiveStatus;
+}
+
 export interface AnalysisJob {
   id: string;
   evidence_id: string;

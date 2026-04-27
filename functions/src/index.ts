@@ -48,6 +48,10 @@ const reviewSchema = z.object({
   note: z.string().max(1200).optional()
 });
 
+const deleteCaseSchema = z.object({
+  caseId: z.string().min(1).max(180)
+});
+
 function adminEmails() {
   return ADMIN_EMAILS.value()
     .split(",")
@@ -535,6 +539,118 @@ function hasSpecificEvidenceSource(data: FirebaseFirestore.DocumentData) {
   }
 }
 
+function sourceHost(data: FirebaseFirestore.DocumentData) {
+  const sourceUrl = String(data.canonical_url || data.source_url || "").trim();
+  try {
+    return new URL(sourceUrl).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function calibratedCredibility(data: FirebaseFirestore.DocumentData) {
+  const stored = Math.max(0, Math.min(100, Number(data.credibility_score ?? 0)));
+  const host = sourceHost(data);
+  const platform = String(data.platform ?? "").toLowerCase();
+  const type = String(data.type ?? "").toLowerCase();
+  const archiveStatus = String(data.archive_status ?? "link_only");
+  let adjusted = stored;
+  let floor = 0;
+  const reasons: string[] = [];
+
+  if (host.endsWith(".gov") || platform === "government") {
+    if (stored < 80) adjusted += 8;
+    floor = Math.max(floor, 82);
+    reasons.push("official government source");
+  }
+
+  if (host === "docs.house.gov" || host.endsWith(".house.gov")) {
+    if (stored < 84) adjusted += 4;
+    floor = Math.max(floor, 84);
+    reasons.push("House document repository");
+  }
+
+  if (type === "pdf") {
+    if (stored < 84) adjusted += 2;
+    reasons.push("stable document format");
+  }
+
+  if (archiveStatus === "archived") {
+    adjusted += 3;
+    reasons.push("local archive copy");
+  } else if (archiveStatus === "link_only") {
+    reasons.push("source link retained without local mirror");
+    if (!host.endsWith(".gov") && platform !== "government") adjusted -= 1;
+  }
+
+  if (Array.isArray(data.manipulation_flags) && data.manipulation_flags.length > 0) {
+    adjusted -= Math.min(10, data.manipulation_flags.length * 3);
+    reasons.push("review flags present");
+  }
+
+  const score = Math.max(floor, Math.min(92, Math.round(adjusted)));
+  return {
+    score,
+    basis: reasons.length
+      ? `${reasons.join(", ")}. Score reflects source provenance, not proof that every claim inside the record is true.`
+      : "Score reflects retained source provenance, extraction quality, and review status."
+  };
+}
+
+function intakeTags(data: FirebaseFirestore.DocumentData) {
+  const values = [
+    ...(Array.isArray(data.tags) ? data.tags : []),
+    String(data.platform ?? ""),
+    String(data.type ?? "")
+  ];
+  if (sourceHost(data).endsWith(".gov")) values.push("official-source");
+  return Array.from(new Set(values.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))).slice(0, 10);
+}
+
+function intakeNotes(data: FirebaseFirestore.DocumentData, asksForConnection: boolean, priorCount: number) {
+  const title = String(data.title ?? "Untitled evidence");
+  const summary = String(data.content_text ?? "").replace(/\s+/g, " ").slice(0, 360);
+  const prefix = priorCount > 0
+    ? "Already surfaced in this Oracle session; use this pass as the intake view for the same source."
+    : "Intake-ready source. Preserve it as a primary record before weaving broader claims.";
+  const connectionCaveat = asksForConnection
+    ? "It supports that the cited testimony/document exists, but it is not enough by itself to prove a cross-case connection."
+    : "Review the record for exact claims before connecting it to a case.";
+  return `${prefix} ${title}: ${summary} ${connectionCaveat}`.slice(0, 900);
+}
+
+function buildIntakeCards(candidates: Array<FirebaseFirestore.DocumentData & { id: string }>, asksForConnection: boolean, priorCount: number) {
+  return candidates.map((item) => {
+    const calibrated = calibratedCredibility(item);
+    return {
+      evidenceId: item.id,
+      title: String(item.title ?? "Untitled evidence"),
+      url: String(item.source_url ?? item.canonical_url ?? ""),
+      tags: intakeTags(item),
+      intakeNotes: intakeNotes(item, asksForConnection, priorCount),
+      initialCredibility: calibrated.score,
+      credibilityBasis: calibrated.basis,
+      archiveStatus: item.archive_status ?? "link_only"
+    };
+  });
+}
+
+function insufficientConnectionAnswer(count: number, credibilityMin: number, priorCount: number) {
+  if (count === 0) {
+    return "No specific preserved evidence matched the question at the requested credibility threshold.";
+  }
+
+  if (priorCount === 0) {
+    return `Only ${count} preserved evidence record matched the question at credibility >= ${credibilityMin}. I cannot claim a cross-case connection from one record, so I am returning it as an evidence intake card instead.`;
+  }
+
+  if (priorCount === 1) {
+    return `This is the same single-record match as the prior Oracle answer. New angle: treat it as a seed source, then add at least one independent corroborating record before asking for a connection.`;
+  }
+
+  return `Still only the same single-record evidence set is available for this question. The useful next move is intake cleanup: confirm tags, archive status, and credibility, then collect a second source.`;
+}
+
 async function keywordEvidenceFallback(question: string, credibilityMin: number) {
   const snapshot = await db.collection("evidences").where("credibility_score", ">=", credibilityMin).limit(60).get();
   const terms = oracleTerms(question);
@@ -722,6 +838,93 @@ export const setEvidenceReviewStatus = onCall({ region: "us-central1" }, async (
   return {
     evidenceId: reviewInput.evidenceId,
     reviewStatus: reviewInput.reviewStatus
+  };
+});
+
+function chunks<T>(items: T[], size: number) {
+  const groups: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    groups.push(items.slice(index, index + size));
+  }
+  return groups;
+}
+
+export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (request) => {
+  const deletedBy = requireAdmin(request);
+  const input = deleteCaseSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Case deletion request is invalid.", input.error.flatten());
+  }
+
+  const { caseId } = input.data;
+  const caseRef = db.collection("conspiracies").doc(caseId);
+  const evidenceSnapshot = await db.collection("evidences").where("linked_conspiracy_ids", "array-contains", caseId).get();
+  const evidenceIds = evidenceSnapshot.docs.map((doc) => doc.id);
+  const assetPaths = new Set<string>();
+  const connectionRefs = new Map<string, FirebaseFirestore.DocumentReference>();
+
+  evidenceSnapshot.docs.forEach((doc) => {
+    const data = doc.data();
+    if (Array.isArray(data.archived_assets)) {
+      data.archived_assets.forEach((asset) => {
+        const path = String(asset?.path ?? "").replace(/^storage:\/\//, "");
+        if (path && !path.startsWith("http")) assetPaths.add(path);
+      });
+    }
+    const mediaPath = String(data.media_url ?? "").replace(/^storage:\/\//, "");
+    if (mediaPath && !mediaPath.startsWith("http") && !mediaPath.startsWith("local://")) {
+      assetPaths.add(mediaPath);
+    }
+  });
+
+  const caseToConnections = await db.collection("connections").where("to", "==", caseId).get();
+  caseToConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+
+  const caseFromConnections = await db.collection("connections").where("from", "==", caseId).get();
+  caseFromConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+
+  for (const group of chunks(evidenceIds, 30)) {
+    const fromEvidenceConnections = await db.collection("connections").where("from", "in", group).get();
+    fromEvidenceConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+
+    const toEvidenceConnections = await db.collection("connections").where("to", "in", group).get();
+    toEvidenceConnections.docs.forEach((doc) => connectionRefs.set(doc.ref.path, doc.ref));
+  }
+
+  const bulkWriter = db.bulkWriter();
+  bulkWriter.delete(caseRef);
+  evidenceSnapshot.docs.forEach((doc) => bulkWriter.delete(doc.ref));
+  connectionRefs.forEach((ref) => bulkWriter.delete(ref));
+  await bulkWriter.close();
+
+  let assetsDeleted = 0;
+  await Promise.all(
+    Array.from(assetPaths).map(async (assetPath) => {
+      try {
+        await bucket.file(assetPath).delete();
+        assetsDeleted += 1;
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? Number(error.code) : 0;
+        if (code !== 404) {
+          logger.warn("Case evidence asset deletion failed", { caseId, assetPath, error });
+        }
+      }
+    })
+  );
+
+  logger.info("Deleted case with linked evidence", {
+    caseId,
+    deletedBy,
+    evidenceCount: evidenceSnapshot.size,
+    connectionCount: connectionRefs.size,
+    assetsDeleted
+  });
+
+  return {
+    caseId,
+    evidenceDeleted: evidenceSnapshot.size,
+    stringsDeleted: connectionRefs.size,
+    assetsDeleted
   };
 });
 
@@ -922,6 +1125,9 @@ export const oracleAsk = onCall(
     requireAdmin(request);
     const question = String(request.data?.question ?? "").trim();
     const credibilityMin = Math.max(0, Math.min(100, Number(request.data?.credibilityMin ?? 0)));
+    const previousAnswers = Array.isArray(request.data?.previousAnswers)
+      ? request.data.previousAnswers.map((answer: unknown) => String(answer).slice(0, 900)).filter(Boolean).slice(-3)
+      : [];
     if (!question) {
       throw new HttpsError("invalid-argument", "Question is required.");
     }
@@ -954,6 +1160,7 @@ export const oracleAsk = onCall(
     const linkedCaseCount = new Set(
       candidates.flatMap((item) => Array.isArray(item.linked_conspiracy_ids) ? item.linked_conspiracy_ids.map(String) : [])
     ).size;
+    const intakeCards = buildIntakeCards(candidates, asksForConnection, previousAnswers.length);
 
     const context = candidates
       .map(
@@ -964,16 +1171,14 @@ export const oracleAsk = onCall(
 
     let answer = "No preserved evidence matched the question at the requested credibility threshold.";
     if (asksForConnection && (candidates.length < 2 || linkedCaseCount < 2)) {
-      answer = candidates.length
-        ? `Only ${candidates.length} preserved evidence record matched the question at credibility >= ${credibilityMin}. That is not enough to claim a cross-case connection. Add or approve more specific sources before asking Oracle to weave this thread.`
-        : "No specific preserved evidence matched the question at the requested credibility threshold.";
+      answer = insufficientConnectionAnswer(candidates.length, credibilityMin, previousAnswers.length);
     } else if (context) {
       if (apiKey) {
         try {
           const ai = new GoogleGenAI({ apiKey });
           const response = await ai.models.generateContent({
             model: GEMINI_TEXT_MODEL,
-            contents: oraclePrompt({ question, credibilityMin, context }),
+            contents: oraclePrompt({ question, credibilityMin, context, previousAnswers }),
             config: { temperature: 0.2 }
           });
           answer = response.text ?? answer;
@@ -993,8 +1198,10 @@ export const oracleAsk = onCall(
         title: String(item.title ?? "Untitled evidence"),
         sourceUrl: String(item.source_url ?? ""),
         archiveStatus: item.archive_status ?? "link_only",
-        credibility: Number(item.credibility_score ?? 0)
-      }))
+        credibility: calibratedCredibility(item).score
+      })),
+      intakeCards,
+      repeatCount: previousAnswers.length
     };
   }
 );

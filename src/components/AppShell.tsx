@@ -50,25 +50,6 @@ function setViewHash(view: ViewKey) {
   }
 }
 
-function mergeWithSamples<T extends { id: string }>(
-  samples: T[],
-  live: T[],
-  keyForItem?: (item: T) => Array<string | undefined>
-) {
-  const seen = new Set<string>();
-  const mark = (item: T) => {
-    seen.add(`id:${item.id}`);
-    keyForItem?.(item).filter(Boolean).forEach((key) => seen.add(`key:${key}`));
-  };
-  const isSeen = (item: T) =>
-    seen.has(`id:${item.id}`) || Boolean(keyForItem?.(item).filter(Boolean).some((key) => seen.has(`key:${key}`)));
-
-  samples.forEach(mark);
-  const additions = live.filter((item) => !isSeen(item));
-  additions.forEach(mark);
-  return [...samples, ...additions];
-}
-
 function iso(value: unknown) {
   if (!value) {
     return fallbackIso;
@@ -163,16 +144,11 @@ function AuthenticatedApp({
             review_status: data.review_status ?? "approved"
           } as Evidence;
         });
-        if (docs.length > 0) {
-          setEvidences(
-            mergeWithSamples(sampleEvidence, docs, (evidence) => [
-              evidence.canonical_url,
-              evidence.source_url
-            ])
-          );
-          setDataStatus("live");
-          setSelectedEvidenceId((current) => current ?? docs[0]?.id ?? null);
-        }
+        setEvidences(docs);
+        setDataStatus("live");
+        setSelectedEvidenceId((current) =>
+          current && docs.some((evidence) => evidence.id === current) ? current : docs[0]?.id ?? null
+        );
       },
       () => setDataStatus("error")
     );
@@ -189,9 +165,7 @@ function AuthenticatedApp({
             tags: data.tags ?? []
           } as Conspiracy;
         });
-        if (docs.length > 0) {
-          setConspiracies(mergeWithSamples(sampleConspiracies, docs));
-        }
+        setConspiracies(docs);
       },
       () => setDataStatus("error")
     );
@@ -208,15 +182,7 @@ function AuthenticatedApp({
             updated_at: data.updated_at ? iso(data.updated_at) : undefined
           } as Connection;
         });
-        if (docs.length > 0) {
-          setConnections(
-            docs.length > sampleConnections.length
-              ? mergeWithSamples(sampleConnections, docs, (connection) => [
-                  `${connection.from}:${connection.to}`
-                ])
-              : sampleConnections
-          );
-        }
+        setConnections(docs);
       },
       () => setDataStatus("error")
     );

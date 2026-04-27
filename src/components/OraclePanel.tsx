@@ -4,7 +4,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { httpsCallable } from "firebase/functions";
 import { Bot, Loader2, Send, Sparkles } from "lucide-react";
 import { functions } from "@/lib/firebase";
-import type { Evidence, OracleCitation } from "@/types/domain";
+import type { Evidence, OracleCitation, OracleIntakeCard } from "@/types/domain";
 
 interface OraclePanelProps {
   evidences: Evidence[];
@@ -14,6 +14,8 @@ interface OraclePanelProps {
 interface OracleResponse {
   answer: string;
   citations: OracleCitation[];
+  intakeCards?: OracleIntakeCard[];
+  repeatCount?: number;
 }
 
 const ORACLE_STOP_WORDS = new Set(["show", "with", "and", "the", "for", "all", "case", "cases", "evidence", "connecting"]);
@@ -48,10 +50,81 @@ function hasSpecificSource(evidence: Evidence) {
   }
 }
 
+function sourceHost(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function calibratedCredibility(evidence: Evidence) {
+  const host = sourceHost(evidence.canonical_url || evidence.source_url);
+  let adjusted = evidence.credibility_score;
+  let floor = 0;
+  const reasons: string[] = [];
+
+  if (host.endsWith(".gov") || evidence.platform.toLowerCase() === "government") {
+    if (evidence.credibility_score < 80) adjusted += 8;
+    floor = Math.max(floor, 82);
+    reasons.push("official government source");
+  }
+  if (host === "docs.house.gov" || host.endsWith(".house.gov")) {
+    if (evidence.credibility_score < 84) adjusted += 4;
+    floor = Math.max(floor, 84);
+    reasons.push("House document repository");
+  }
+  if (evidence.type === "pdf") {
+    if (evidence.credibility_score < 84) adjusted += 2;
+    reasons.push("stable document format");
+  }
+  if (evidence.archive_status === "archived") {
+    adjusted += 3;
+    reasons.push("local archive copy");
+  } else if (evidence.archive_status === "link_only") {
+    reasons.push("source link retained without local mirror");
+    if (!host.endsWith(".gov") && evidence.platform.toLowerCase() !== "government") adjusted -= 1;
+  }
+
+  return {
+    score: Math.max(floor, Math.min(92, Math.round(adjusted))),
+    basis: reasons.length
+      ? `${reasons.join(", ")}. Score reflects source provenance, not proof that every claim inside the record is true.`
+      : "Score reflects retained source provenance, extraction quality, and review status."
+  };
+}
+
+function buildLocalIntakeCards(matches: Evidence[], asksConnection: boolean, priorCount: number): OracleIntakeCard[] {
+  return matches.map((evidence) => {
+    const calibrated = calibratedCredibility(evidence);
+    const tags = Array.from(new Set([
+      ...evidence.tags,
+      evidence.platform,
+      evidence.type,
+      sourceHost(evidence.source_url).endsWith(".gov") ? "official-source" : ""
+    ].map((tag) => tag.trim().toLowerCase()).filter(Boolean))).slice(0, 10);
+    return {
+      evidenceId: evidence.id,
+      title: evidence.title,
+      url: evidence.source_url,
+      tags,
+      intakeNotes: `${priorCount > 0 ? "Already surfaced in this Oracle session; this is the intake view for the same source." : "Intake-ready source."} ${evidence.content_text.slice(0, 360)} ${asksConnection ? "It is not enough by itself to prove a cross-case connection." : ""}`,
+      initialCredibility: calibrated.score,
+      credibilityBasis: calibrated.basis,
+      archiveStatus: evidence.archive_status
+    };
+  });
+}
+
+function questionKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
   const [question, setQuestion] = useState("");
   const [credibilityMin, setCredibilityMin] = useState(55);
   const [answer, setAnswer] = useState<OracleResponse | null>(null);
+  const [oracleHistory, setOracleHistory] = useState<Array<{ key: string; answer: string; citationTitles: string[] }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,13 +142,26 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
 
     setLoading(true);
     setError(null);
+    const key = questionKey(prompt);
+    const previousAnswers = oracleHistory
+      .filter((entry) => entry.key === key)
+      .slice(-3)
+      .map((entry) => `${entry.answer}\nCitations: ${entry.citationTitles.join(", ") || "none"}`);
     try {
       const callable = httpsCallable<
-        { question: string; credibilityMin: number },
+        { question: string; credibilityMin: number; previousAnswers?: string[] },
         OracleResponse
       >(functions, "oracleAsk");
-      const result = await callable({ question: prompt, credibilityMin });
+      const result = await callable({ question: prompt, credibilityMin, previousAnswers });
       setAnswer(result.data);
+      setOracleHistory((current) => [
+        ...current,
+        {
+          key,
+          answer: result.data.answer,
+          citationTitles: result.data.citations.map((citation) => citation.title)
+        }
+      ].slice(-12));
     } catch (caught) {
       const terms = localOracleTerms(prompt);
       const localMatches = evidences
@@ -93,18 +179,32 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
       if (localMatches.length > 0) {
         const asksConnection = /\b(connect|connecting|connection|link|links|between|across|thread|string)\b/i.test(prompt);
         const linkedCaseCount = new Set(localMatches.flatMap((evidence) => evidence.linked_conspiracy_ids)).size;
-        setAnswer({
-          answer: asksConnection && (localMatches.length < 2 || linkedCaseCount < 2)
-            ? `The live Oracle function was unavailable. Local retrieval found ${localMatches.length} matching preserved record, which is not enough to claim a cross-case connection.`
-            : "The live Oracle function was unavailable, so this is a strict local retrieval over currently loaded evidence. It found related records, but did not run Gemini reasoning.",
+        const fallbackAnswer = asksConnection && (localMatches.length < 2 || linkedCaseCount < 2)
+            ? previousAnswers.length
+              ? `The live Oracle function was unavailable. This is still the same single-record match, so I am returning it as intake material instead of repeating the prior answer.`
+              : `The live Oracle function was unavailable. Local retrieval found ${localMatches.length} matching preserved record, which is not enough to claim a cross-case connection.`
+            : "The live Oracle function was unavailable, so this is a strict local retrieval over currently loaded evidence. It found related records, but did not run Gemini reasoning.";
+        const fallbackResponse = {
+          answer: fallbackAnswer,
           citations: localMatches.map((evidence) => ({
             evidenceId: evidence.id,
             title: evidence.title,
             sourceUrl: evidence.source_url,
             archiveStatus: evidence.archive_status,
-            credibility: evidence.credibility_score
-          }))
-        });
+            credibility: calibratedCredibility(evidence).score
+          })),
+          intakeCards: buildLocalIntakeCards(localMatches, asksConnection, previousAnswers.length),
+          repeatCount: previousAnswers.length
+        };
+        setAnswer(fallbackResponse);
+        setOracleHistory((current) => [
+          ...current,
+          {
+            key,
+            answer: fallbackResponse.answer,
+            citationTitles: fallbackResponse.citations.map((citation) => citation.title)
+          }
+        ].slice(-12));
       } else {
         setError(caught instanceof Error ? caught.message : "Oracle request failed.");
       }
@@ -167,6 +267,37 @@ export function OraclePanel({ evidences, isAdminHint }: OraclePanelProps) {
               <h3>Answer</h3>
             </div>
             <p>{answer.answer}</p>
+            {answer.intakeCards?.length ? (
+              <div className="oracle-intake-list">
+                {answer.intakeCards.map((card) => (
+                  <article className="oracle-intake-card" key={card.evidenceId}>
+                    <div className="oracle-intake-card-heading">
+                      <span>Evidence Intake</span>
+                      <strong>{card.initialCredibility}/100</strong>
+                    </div>
+                    <h4>{card.title}</h4>
+                    <dl>
+                      <div>
+                        <dt>URL</dt>
+                        <dd><a href={card.url} target="_blank" rel="noreferrer">{card.url}</a></dd>
+                      </div>
+                      <div>
+                        <dt>Tags</dt>
+                        <dd>{card.tags.join(", ") || "needs-tagging"}</dd>
+                      </div>
+                      <div>
+                        <dt>Intake Notes</dt>
+                        <dd>{card.intakeNotes}</dd>
+                      </div>
+                      <div>
+                        <dt>Initial Credibility</dt>
+                        <dd>{card.initialCredibility}/100 - {card.credibilityBasis}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <div className="citation-list">
               {answer.citations.map((citation) => (
                 <a key={citation.evidenceId} href={citation.sourceUrl} target="_blank" rel="noreferrer">
