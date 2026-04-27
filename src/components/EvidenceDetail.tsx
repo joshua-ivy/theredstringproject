@@ -1,10 +1,14 @@
 "use client";
 
-import { Archive, ExternalLink, X } from "lucide-react";
+import { FormEvent, useState } from "react";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { Archive, ExternalLink, Loader2, Save, X } from "lucide-react";
+import { auth, db } from "@/lib/firebase";
 import type { Evidence } from "@/types/domain";
 
 interface EvidenceDetailProps {
   evidence: Evidence | null;
+  isAdminHint?: boolean;
   onClose?: () => void;
 }
 
@@ -40,7 +44,14 @@ function formatRetrieved(value: string) {
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
-export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
+export function EvidenceDetail({ evidence, isAdminHint = false, onClose }: EvidenceDetailProps) {
+  const [reviewDraft, setReviewDraft] = useState({
+    evidenceId: "",
+    score: 0,
+    explanation: "",
+    message: null as string | null
+  });
+  const [reviewBusy, setReviewBusy] = useState(false);
   const primaryAsset = evidence?.archived_assets.find((asset) => asset.url) ?? evidence?.archived_assets[0] ?? null;
   const hashPreview = evidence?.content_hash ? `${evidence.content_hash.slice(0, 12)}...` : "none";
   const sourceLabel = evidence
@@ -59,8 +70,47 @@ export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
     : 0;
   const manipulation = evidence
     ? evidence.credibility_breakdown?.manipulation_signals ??
+      evidence.credibility_breakdown?.manipulation_risk ??
       Math.max(4, Math.min(90, 100 - evidence.credibility_score + (evidence.manipulation_flags?.length ?? 0) * 12))
     : 0;
+
+  const activeReviewDraft = evidence && reviewDraft.evidenceId === evidence.id
+    ? reviewDraft
+    : {
+        evidenceId: evidence?.id ?? "",
+        score: evidence?.credibility_score ?? 0,
+        explanation: evidence?.credibility_explanation ?? "",
+        message: null
+      };
+
+  async function saveCredibilityReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!evidence) return;
+
+    setReviewBusy(true);
+    setReviewDraft((current) => ({ ...current, evidenceId: evidence.id, message: null }));
+    try {
+      await updateDoc(doc(db, "evidences", evidence.id), {
+        machine_credibility_score: evidence.machine_credibility_score ?? evidence.credibility_score,
+        machine_credibility_explanation: evidence.machine_credibility_explanation ?? evidence.credibility_explanation,
+        credibility_score: activeReviewDraft.score,
+        credibility_explanation: activeReviewDraft.explanation.trim(),
+        credibility_review_note: "Admin-reviewed score. Treats the displayed score as source/artifact credibility, not proof of every interpretation.",
+        credibility_reviewed_by: auth.currentUser?.email ?? "admin",
+        credibility_reviewed_at: serverTimestamp(),
+        updated_at: serverTimestamp()
+      });
+      setReviewDraft((current) => ({ ...current, evidenceId: evidence.id, message: "Credibility review saved." }));
+    } catch (error) {
+      setReviewDraft((current) => ({
+        ...current,
+        evidenceId: evidence.id,
+        message: error instanceof Error ? error.message : "Credibility review could not be saved."
+      }));
+    } finally {
+      setReviewBusy(false);
+    }
+  }
 
   return (
     <>
@@ -84,13 +134,21 @@ export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
 
           <section className="credibility-card">
             <div>
-              <span>Credibility</span>
+              <span>{evidence.credibility_reviewed_at ? "Reviewed Credibility" : "Credibility"}</span>
               <strong>{evidence.credibility_score} / 100</strong>
             </div>
             <div className="credibility-meter">
               <span style={{ width: `${evidence.credibility_score}%` }} />
             </div>
             <p>{evidence.credibility_explanation}</p>
+            {evidence.machine_credibility_score !== undefined ? (
+              <small>
+                Machine draft: {evidence.machine_credibility_score}/100. Admin review can override Gemini when source reality,
+                chronology, or provenance changes the reading.
+              </small>
+            ) : (
+              <small>Gemini score is a draft signal. Admin review should account for source reality, chronology, and provenance.</small>
+            )}
           </section>
 
           <section className="score-breakdown">
@@ -108,6 +166,49 @@ export function EvidenceDetail({ evidence, onClose }: EvidenceDetailProps) {
               ))}
             </div>
           </section>
+
+          {isAdminHint ? (
+            <form className="credibility-review-form" onSubmit={saveCredibilityReview}>
+              <h3>Admin Credibility Review</h3>
+              <label>
+                Reviewed score: {activeReviewDraft.score}/100
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={activeReviewDraft.score}
+                  onChange={(event) =>
+                    setReviewDraft({
+                      evidenceId: evidence.id,
+                      score: Number(event.target.value),
+                      explanation: activeReviewDraft.explanation,
+                      message: null
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Review explanation
+                <textarea
+                  value={activeReviewDraft.explanation}
+                  onChange={(event) =>
+                    setReviewDraft({
+                      evidenceId: evidence.id,
+                      score: activeReviewDraft.score,
+                      explanation: event.target.value,
+                      message: null
+                    })
+                  }
+                  placeholder="Explain source reality, chronology, provenance, and what remains unproven."
+                />
+              </label>
+              <button className="secondary-button" disabled={reviewBusy || !activeReviewDraft.explanation.trim()}>
+                {reviewBusy ? <Loader2 className="spin" size={14} /> : <Save size={14} />}
+                Save review
+              </button>
+              {activeReviewDraft.message ? <span>{activeReviewDraft.message}</span> : null}
+            </form>
+          ) : null}
 
           <div className="detail-cta-row">
             <a className="source-link" href={evidence.source_url} target="_blank" rel="noreferrer">

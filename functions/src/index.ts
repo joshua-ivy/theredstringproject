@@ -52,6 +52,11 @@ const deleteCaseSchema = z.object({
   caseId: z.string().min(1).max(180)
 });
 
+const linkEvidenceSchema = z.object({
+  evidenceId: z.string().min(1).max(180),
+  caseId: z.string().min(1).max(180)
+});
+
 function adminEmails() {
   return ADMIN_EMAILS.value()
     .split(",")
@@ -926,6 +931,75 @@ export const deleteCaseWithEvidence = onCall({ region: "us-central1" }, async (r
     stringsDeleted: connectionRefs.size,
     assetsDeleted
   };
+});
+
+export const linkEvidenceToCase = onCall({ region: "us-central1" }, async (request) => {
+  const linkedBy = requireAdmin(request);
+  const input = linkEvidenceSchema.safeParse(request.data);
+  if (!input.success) {
+    throw new HttpsError("invalid-argument", "Evidence link request is invalid.", input.error.flatten());
+  }
+
+  const { evidenceId, caseId } = input.data;
+  const evidenceRef = db.collection("evidences").doc(evidenceId);
+  const caseRef = db.collection("conspiracies").doc(caseId);
+  const connectionRef = db.collection("connections").doc(`${evidenceId}-${caseId}`);
+
+  await db.runTransaction(async (transaction) => {
+    const [evidenceSnap, caseSnap, connectionSnap] = await Promise.all([
+      transaction.get(evidenceRef),
+      transaction.get(caseRef),
+      transaction.get(connectionRef)
+    ]);
+
+    if (!evidenceSnap.exists) {
+      throw new HttpsError("not-found", "Evidence record was not found.");
+    }
+    if (!caseSnap.exists) {
+      throw new HttpsError("not-found", "Case file was not found.");
+    }
+
+    const evidence = evidenceSnap.data() ?? {};
+    const caseData = caseSnap.data() ?? {};
+    const linkedIds = Array.isArray(evidence.linked_conspiracy_ids) ? evidence.linked_conspiracy_ids.map(String) : [];
+    const alreadyLinked = linkedIds.includes(caseId);
+    const evidenceScore = Number(evidence.credibility_score ?? 0);
+    const existingEvidenceCount = Number(caseData.evidence_count ?? 0);
+    const existingCredibility = Number(caseData.credibility_avg ?? evidenceScore);
+    const nextEvidenceCount = alreadyLinked ? existingEvidenceCount : existingEvidenceCount + 1;
+    const nextCredibility = alreadyLinked || nextEvidenceCount <= 0
+      ? existingCredibility
+      : Math.round(((existingCredibility * existingEvidenceCount) + evidenceScore) / nextEvidenceCount);
+
+    transaction.update(evidenceRef, {
+      linked_conspiracy_ids: FieldValue.arrayUnion(caseId),
+      updated_at: FieldValue.serverTimestamp()
+    });
+
+    transaction.set(
+      connectionRef,
+      {
+        from: evidenceId,
+        to: caseId,
+        type: "correlates",
+        weight: Math.max(0.2, Math.min(1, evidenceScore / 100)),
+        ai_reason: `Admin drag-linked evidence to case on the board. Source artifact: ${String(evidence.title ?? evidenceId).slice(0, 160)}.`,
+        created_at: connectionSnap.exists ? connectionSnap.get("created_at") ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+        linked_by: linkedBy
+      },
+      { merge: true }
+    );
+
+    transaction.update(caseRef, {
+      evidence_count: nextEvidenceCount,
+      string_count: connectionSnap.exists ? Number(caseData.string_count ?? 0) : Number(caseData.string_count ?? 0) + 1,
+      credibility_avg: nextCredibility,
+      last_weaved: FieldValue.serverTimestamp()
+    });
+  });
+
+  return { evidenceId, caseId, status: "linked" };
 });
 
 export const analyzeEvidenceTask = onTaskDispatched(

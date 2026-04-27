@@ -9,7 +9,9 @@ interface RedStringBoardProps {
   conspiracies: Conspiracy[];
   connections: Connection[];
   selectedEvidenceId: string | null;
+  isAdminHint: boolean;
   onSelectEvidence: (id: string) => void;
+  onLinkEvidenceToCase: (evidenceId: string, caseId: string) => Promise<void>;
   onPinEvidence: () => void;
   onNewString: () => void;
 }
@@ -32,8 +34,8 @@ interface BoardString {
   type: string;
 }
 
-const BOARD_WIDTH = 1400;
-const BOARD_HEIGHT = 800;
+const BOARD_WIDTH = 2600;
+const BOARD_HEIGHT = 1200;
 
 const evidenceSlotById: Record<string, { x: number; y: number; rotate: number }> = {
   "evidence-church-hearings": { x: 540, y: 230, rotate: -4 },
@@ -52,7 +54,11 @@ const fallbackEvidenceSlots = [
   { x: 950, y: 470, rotate: -2 },
   { x: 220, y: 460, rotate: -2 },
   { x: 1110, y: 310, rotate: 2 },
-  { x: 720, y: 650, rotate: -3 }
+  { x: 720, y: 650, rotate: -3 },
+  { x: 1420, y: 420, rotate: -2 },
+  { x: 1680, y: 590, rotate: 3 },
+  { x: 1980, y: 340, rotate: -1 },
+  { x: 2260, y: 690, rotate: 2 }
 ];
 
 const caseSlotById: Record<string, { x: number; y: number }> = {
@@ -66,7 +72,9 @@ const ghostArtifacts = [
   { x: 1208, y: 222, rotate: 5, label: "source fragment" },
   { x: 180, y: 706, rotate: 2, label: "retrieved 04.26" },
   { x: 1200, y: 696, rotate: -4, label: "entity index" },
-  { x: 686, y: 92, rotate: -2, label: "hash verified" }
+  { x: 686, y: 92, rotate: -2, label: "hash verified" },
+  { x: 1660, y: 210, rotate: 4, label: "case overflow" },
+  { x: 2140, y: 830, rotate: -5, label: "unfiled source" }
 ];
 
 function hashNumber(value: string) {
@@ -82,13 +90,16 @@ export function RedStringBoard({
   conspiracies,
   connections,
   selectedEvidenceId,
+  isAdminHint,
   onSelectEvidence,
+  onLinkEvidenceToCase,
   onPinEvidence,
   onNewString
 }: RedStringBoardProps) {
   const [zoom, setZoom] = useState(0.78);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [boardMessage, setBoardMessage] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
   const [nodePositions, setNodePositions] = useState<Record<string, BoardNode>>({});
   const [drag, setDrag] = useState<
     | { mode: "pan"; startX: number; startY: number; originX: number; originY: number }
@@ -100,7 +111,9 @@ export function RedStringBoard({
     const nodes: BoardNode[] = [];
 
     conspiracies.forEach((item, index) => {
-      const slot = caseSlotById[item.id] ?? { x: 410 + index * 240, y: 360 + (index % 2) * 110 };
+      const column = index % 7;
+      const row = Math.floor(index / 7);
+      const slot = caseSlotById[item.id] ?? { x: 410 + column * 320, y: 360 + row * 210 + (index % 2) * 80 };
       nodes.push({
         id: item.id,
         kind: "case",
@@ -115,8 +128,8 @@ export function RedStringBoard({
       nodes.push({
         id: item.id,
         kind: "evidence",
-        x: Math.min(1240, slot.x + ring * 48),
-        y: Math.min(700, slot.y + ring * 36),
+        x: Math.min(BOARD_WIDTH - 160, slot.x + ring * 96),
+        y: Math.min(BOARD_HEIGHT - 120, slot.y + ring * 64),
         rotate: slot.rotate + (hashNumber(item.id) % 3) - 1
       });
     });
@@ -186,6 +199,13 @@ export function RedStringBoard({
     setDrag({ mode: "node", id, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y });
   }
 
+  function clampedPosition(x: number, y: number) {
+    return {
+      x: Math.max(80, Math.min(BOARD_WIDTH - 80, x)),
+      y: Math.max(80, Math.min(BOARD_HEIGHT - 80, y))
+    };
+  }
+
   function movePointer(event: React.PointerEvent<HTMLDivElement>) {
     if (!drag) {
       return;
@@ -199,18 +219,89 @@ export function RedStringBoard({
       return;
     }
 
+    const next = clampedPosition(drag.originX + dx / zoom, drag.originY + dy / zoom);
     setNodePositions((current) => ({
       ...current,
       [drag.id]: {
         ...(current[drag.id] ?? nodeMap.get(drag.id)),
-        x: Math.max(70, Math.min(BOARD_WIDTH - 70, drag.originX + dx / zoom)),
-        y: Math.max(70, Math.min(BOARD_HEIGHT - 70, drag.originY + dy / zoom))
+        ...next
       }
     }));
   }
 
-  function endPointer() {
+  function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  async function endPointer(event: React.PointerEvent<HTMLDivElement>) {
+    const activeDrag = drag;
     setDrag(null);
+    if (!activeDrag || activeDrag.mode !== "node") {
+      return;
+    }
+
+    const moved = Math.hypot(event.clientX - activeDrag.startX, event.clientY - activeDrag.startY);
+    if (moved < 24) {
+      return;
+    }
+
+    const draggedNode = nodeMap.get(activeDrag.id);
+    if (!draggedNode) {
+      return;
+    }
+
+    const finalPosition = clampedPosition(
+      activeDrag.originX + (event.clientX - activeDrag.startX) / zoom,
+      activeDrag.originY + (event.clientY - activeDrag.startY) / zoom
+    );
+
+    const evidenceNode = draggedNode.kind === "evidence"
+      ? { id: draggedNode.id, position: finalPosition }
+      : Array.from(nodeMap.values())
+          .filter((node) => node.kind === "evidence")
+          .map((node) => ({ id: node.id, position: node }))
+          .sort((a, b) => distance(a.position, finalPosition) - distance(b.position, finalPosition))[0];
+    const caseNode = draggedNode.kind === "case"
+      ? { id: draggedNode.id, position: finalPosition }
+      : Array.from(nodeMap.values())
+          .filter((node) => node.kind === "case")
+          .map((node) => ({ id: node.id, position: node }))
+          .sort((a, b) => distance(a.position, finalPosition) - distance(b.position, finalPosition))[0];
+
+    if (!evidenceNode || !caseNode || evidenceNode.id === caseNode.id) {
+      return;
+    }
+
+    if (distance(evidenceNode.position, caseNode.position) > 150) {
+      return;
+    }
+
+    const evidence = evidences.find((item) => item.id === evidenceNode.id);
+    const targetCase = conspiracies.find((item) => item.id === caseNode.id);
+    if (!evidence || !targetCase) {
+      return;
+    }
+
+    if (evidence.linked_conspiracy_ids.includes(targetCase.id)) {
+      setBoardMessage(`${evidence.title} is already filed under ${targetCase.title}.`);
+      return;
+    }
+
+    if (!isAdminHint) {
+      setBoardMessage("Sign in as admin to file evidence under a case by dragging.");
+      return;
+    }
+
+    setLinking(true);
+    setBoardMessage(`Filing ${evidence.title} under ${targetCase.title}...`);
+    try {
+      await onLinkEvidenceToCase(evidence.id, targetCase.id);
+      setBoardMessage(`Filed ${evidence.title} under ${targetCase.title}.`);
+    } catch (error) {
+      setBoardMessage(error instanceof Error ? error.message : "Could not file evidence under that case.");
+    } finally {
+      setLinking(false);
+    }
   }
 
   return (
@@ -229,8 +320,8 @@ export function RedStringBoard({
         className="board-pan-surface"
         onPointerDown={beginPan}
         onPointerMove={movePointer}
-        onPointerUp={endPointer}
-        onPointerCancel={endPointer}
+        onPointerUp={(event) => void endPointer(event)}
+        onPointerCancel={(event) => void endPointer(event)}
       >
         <div
           className="board-world"
@@ -350,6 +441,7 @@ export function RedStringBoard({
         <span>{conspiracies.length} case clusters</span>
       </div>
       {boardMessage ? <div className="board-action-message">{boardMessage}</div> : null}
+      {linking ? <div className="board-linking-indicator">Linking evidence...</div> : null}
       <div className="board-help-corner">
         <button onClick={() => {
           setBoardMessage("Opening Evidence Locker. Add or select evidence to pin it onto the board.");

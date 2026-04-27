@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import {
   Archive,
   Bot,
@@ -21,7 +22,7 @@ import { EvidenceDetail } from "@/components/EvidenceDetail";
 import { EvidenceLocker } from "@/components/EvidenceLocker";
 import { OraclePanel } from "@/components/OraclePanel";
 import { RedStringBoard } from "@/components/RedStringBoard";
-import { db } from "@/lib/firebase";
+import { db, functions } from "@/lib/firebase";
 import { sampleConnections, sampleConspiracies, sampleEvidence } from "@/lib/sample-data";
 import type { Connection, Conspiracy, Evidence } from "@/types/domain";
 
@@ -340,6 +341,15 @@ function AuthenticatedApp({
                 conspiracies={conspiracies}
                 connections={connections}
                 selectedEvidenceId={selectedEvidence?.id ?? null}
+                isAdminHint={isAdminHint}
+                onLinkEvidenceToCase={async (evidenceId, caseId) => {
+                  const callable = httpsCallable<
+                    { evidenceId: string; caseId: string },
+                    { evidenceId: string; caseId: string; status: string }
+                  >(functions, "linkEvidenceToCase");
+                  await callable({ evidenceId, caseId });
+                  setSelectedEvidenceId(evidenceId);
+                }}
                 onPinEvidence={() => {
                   setActiveView("evidence-locker");
                   setViewHash("evidence-locker");
@@ -396,7 +406,7 @@ function AuthenticatedApp({
 
         {shouldShowDetail ? (
           <aside className="detail-panel">
-            <EvidenceDetail evidence={selectedEvidence} />
+            <EvidenceDetail evidence={selectedEvidence} isAdminHint={isAdminHint} />
           </aside>
         ) : null}
       </section>
@@ -408,7 +418,7 @@ function AuthenticatedApp({
       ) : null}
       {mobileDetailOpen ? (
         <div className="mobile-detail-sheet">
-          <EvidenceDetail evidence={selectedEvidence} onClose={() => setMobileDetailOpen(false)} />
+          <EvidenceDetail evidence={selectedEvidence} isAdminHint={isAdminHint} onClose={() => setMobileDetailOpen(false)} />
         </div>
       ) : null}
     </main>

@@ -27,6 +27,11 @@ export interface Evidence {
   credibility_score: number;
   credibility_explanation: string;
   credibility_breakdown?: Record<string, number>;
+  credibility_reviewed_at?: string;
+  credibility_reviewed_by?: string;
+  credibility_review_note?: string;
+  machine_credibility_score?: number;
+  machine_credibility_explanation?: string;
   manipulation_flags?: string[];
   entities: string[];
   tags: string[];

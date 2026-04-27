@@ -1431,6 +1431,23 @@ input[type="range"] {
   line-height: 1.4;
 }
 
+.board-linking-indicator {
+  position: absolute;
+  right: 16px;
+  bottom: 104px;
+  z-index: 4;
+  padding: 8px 10px;
+  color: var(--amber);
+  background: oklch(0.12 0.015 30 / 0.9);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .board-hud span,
 .archive-chip,
 .entity-list span,
@@ -2232,6 +2249,68 @@ input[type="range"] {
 
 .oracle-intake-card a {
   color: var(--ink-0);
+}
+
+.credibility-card small {
+  display: block;
+  margin-top: 10px;
+  color: var(--ink-2);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.credibility-review-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: oklch(0.12 0.015 30);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.credibility-review-form h3 {
+  margin: 0;
+  color: var(--amber);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.credibility-review-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink-2);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.credibility-review-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.credibility-review-form textarea,
+.credibility-review-form input:not([type="range"]) {
+  width: 100%;
+  color: var(--ink-0);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+  letter-spacing: 0;
+  line-height: 1.45;
+  padding: 10px;
+  text-transform: none;
+}
+
+.credibility-review-form > span {
+  color: var(--green);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
 }
 
 .citation-list {
