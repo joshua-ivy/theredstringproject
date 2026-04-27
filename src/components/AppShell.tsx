@@ -131,7 +131,9 @@ function deriveProjects(projects: Project[], conspiracies: Conspiracy[], evidenc
     .map((project) => {
       const projectCases = casesByProject.get(project.id) ?? [];
       const caseIds = new Set(projectCases.map((item) => item.id));
-      const projectEvidence = evidences.filter((evidence) => evidence.linked_conspiracy_ids.some((caseId) => caseIds.has(caseId)));
+      const projectEvidence = evidences.filter((evidence) =>
+        evidence.project_id === project.id || evidence.linked_conspiracy_ids.some((caseId) => caseIds.has(caseId))
+      );
       const scores = projectEvidence.map((item) => item.credibility_score).filter((score) => Number.isFinite(score));
       return {
         ...project,
@@ -194,6 +196,7 @@ function AuthenticatedApp({
   const [dataStatus, setDataStatus] = useState<"live" | "sample" | "error">("sample");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [pinMode, setPinMode] = useState(false);
 
   useEffect(() => {
     const syncFromHash = () => {
@@ -222,6 +225,7 @@ function AuthenticatedApp({
           return {
             ...data,
             id: doc.id,
+            project_id: data.project_id ? String(data.project_id) : undefined,
             created_at: iso(data.created_at),
             updated_at: data.updated_at ? iso(data.updated_at) : undefined,
             retrieved_at: iso(data.retrieved_at),
@@ -353,8 +357,10 @@ function AuthenticatedApp({
   );
   const projectCaseIds = useMemo(() => new Set(projectCases.map((item) => item.id)), [projectCases]);
   const projectEvidence = useMemo(
-    () => filteredEvidence.filter((evidence) => evidence.linked_conspiracy_ids.some((caseId) => projectCaseIds.has(caseId))),
-    [filteredEvidence, projectCaseIds]
+    () => filteredEvidence.filter((evidence) =>
+      evidence.project_id === activeProjectId || evidence.linked_conspiracy_ids.some((caseId) => projectCaseIds.has(caseId))
+    ),
+    [activeProjectId, filteredEvidence, projectCaseIds]
   );
   const caseEvidence = useMemo(
     () => activeCaseId
@@ -531,6 +537,7 @@ function AuthenticatedApp({
                   setSelectedEvidenceId(evidenceId);
                 }}
                 onPinEvidence={() => {
+                  setPinMode(true);
                   setActiveView("evidence-locker");
                   setViewHash("evidence-locker");
                 }}
@@ -574,6 +581,12 @@ function AuthenticatedApp({
             {activeView === "evidence-locker" ? (
               <EvidenceLocker
                 evidences={filteredEvidence}
+                projects={effectiveProjects}
+                conspiracies={effectiveConspiracies}
+                currentProjectId={activeProjectId}
+                currentCaseId={activeCaseId}
+                pinMode={pinMode}
+                onPinComplete={() => setPinMode(false)}
                 isAdminHint={isAdminHint}
                 onDeleted={(id) => {
                   setEvidences((current) => current.filter((evidence) => evidence.id !== id));

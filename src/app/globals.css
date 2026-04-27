@@ -2025,6 +2025,7 @@ input[type="range"] {
 }
 
 .intake-form input,
+.intake-form select,
 .intake-form textarea,
 .oracle-form textarea {
   width: 100%;
@@ -2035,9 +2036,14 @@ input[type="range"] {
   outline: 0;
 }
 
-.intake-form input {
+.intake-form input,
+.intake-form select {
   height: 38px;
   padding: 0 11px;
+}
+
+.intake-form select {
+  appearance: auto;
 }
 
 .intake-form textarea,
@@ -3224,6 +3230,7 @@ input[type="range"] {
 }
 
 .exact-form input,
+.exact-form select,
 .exact-form textarea {
   margin-top: 5px;
   background: var(--bg-0);

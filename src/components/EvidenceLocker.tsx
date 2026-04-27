@@ -1,14 +1,21 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytesResumable } from "firebase/storage";
-import { ExternalLink, FileUp, Loader2, Send, Trash2, Upload } from "lucide-react";
-import { auth, functions, storage } from "@/lib/firebase";
-import type { Evidence } from "@/types/domain";
+import { ExternalLink, FileUp, Loader2, Plus, Send, Trash2, Upload } from "lucide-react";
+import { auth, db, functions, storage } from "@/lib/firebase";
+import type { Conspiracy, Evidence, Project } from "@/types/domain";
 
 interface EvidenceLockerProps {
   evidences: Evidence[];
+  projects: Project[];
+  conspiracies: Conspiracy[];
+  currentProjectId: string | null;
+  currentCaseId: string | null;
+  pinMode?: boolean;
+  onPinComplete?: () => void;
   isAdminHint: boolean;
   onSelect: (id: string) => void;
   onDeleted?: (id: string) => void;
@@ -59,10 +66,23 @@ function CredibilityBuckets({ evidences }: { evidences: Evidence[] }) {
   );
 }
 
-export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: EvidenceLockerProps) {
+export function EvidenceLocker({
+  evidences,
+  projects,
+  conspiracies,
+  currentProjectId,
+  currentCaseId,
+  pinMode = false,
+  onPinComplete,
+  isAdminHint,
+  onSelect,
+  onDeleted
+}: EvidenceLockerProps) {
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(currentProjectId);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(currentCaseId);
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -71,6 +91,7 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
   const [sortMode, setSortMode] = useState<LockerSort>("credibility");
   const [initialCredibility, setInitialCredibility] = useState<"low" | "med" | "high" | "auto">("auto");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
 
   const filteredEvidence = useMemo(() => {
     if (filter === "approved") {
@@ -96,6 +117,78 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
   );
   const highCount = evidences.filter((evidence) => evidence.credibility_score >= 75).length;
   const flaggedCount = evidences.filter((evidence) => manipulationScore(evidence) > 30).length;
+  const activeProjectId = selectedProjectId && projects.some((project) => project.id === selectedProjectId)
+    ? selectedProjectId
+    : currentProjectId && projects.some((project) => project.id === currentProjectId)
+      ? currentProjectId
+      : projects[0]?.id ?? "";
+  const projectCases = conspiracies.filter((item) => item.project_id === activeProjectId);
+  const activeCaseId = selectedCaseId && projectCases.some((item) => item.id === selectedCaseId)
+    ? selectedCaseId
+    : currentCaseId && projectCases.some((item) => item.id === currentCaseId)
+      ? currentCaseId
+      : "";
+
+  async function assignEvidence(evidenceId: string) {
+    if (activeProjectId) {
+      await updateDoc(doc(db, "evidences", evidenceId), {
+        project_id: activeProjectId,
+        updated_at: serverTimestamp()
+      });
+    }
+
+    if (activeCaseId) {
+      const callable = httpsCallable<
+        { evidenceId: string; caseId: string },
+        { evidenceId: string; caseId: string; status: string }
+      >(functions, "linkEvidenceToCase");
+      await callable({ evidenceId, caseId: activeCaseId });
+    }
+  }
+
+  function assignmentLabel() {
+    const project = projects.find((item) => item.id === activeProjectId);
+    const evidenceCase = conspiracies.find((item) => item.id === activeCaseId);
+    if (project && evidenceCase) return `Filed under ${project.title} / ${evidenceCase.title}.`;
+    if (project) return `Assigned to project ${project.title}. Choose a case later to place it on the board.`;
+    return "Queued without project assignment.";
+  }
+
+  async function pinExistingEvidence(evidence: Evidence, returnToBoard = false) {
+    if (!isAdminHint) {
+      setMessage("Pinning evidence is admin-only.");
+      return;
+    }
+
+    if (!activeCaseId) {
+      setMessage("Choose a case before pinning evidence to the board.");
+      return;
+    }
+
+    if (evidence.linked_conspiracy_ids.includes(activeCaseId)) {
+      setMessage(`${evidence.title} is already filed under this case.`);
+      if (returnToBoard) {
+        onPinComplete?.();
+        onSelect(evidence.id);
+      }
+      return;
+    }
+
+    setAssigningId(evidence.id);
+    setMessage(null);
+    try {
+      await assignEvidence(evidence.id);
+      setMessage(`Pinned ${evidence.title}. ${assignmentLabel()}`);
+      if (returnToBoard) {
+        onPinComplete?.();
+        onSelect(evidence.id);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Evidence could not be pinned to that case.");
+    } finally {
+      setAssigningId(null);
+    }
+  }
 
   async function submitUrl(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -116,7 +209,8 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
         ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
-      setMessage(`Queued evidence ${result.data.evidenceId} (${result.data.status}).`);
+      await assignEvidence(result.data.evidenceId);
+      setMessage(`Queued evidence ${result.data.evidenceId} (${result.data.status}). ${assignmentLabel()}`);
       setUrl("");
       setNotes("");
       setTags("");
@@ -166,7 +260,8 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
         ].filter(Boolean).join("\n") || undefined,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
       });
-      setMessage(`Uploaded and queued evidence ${result.data.evidenceId}.`);
+      await assignEvidence(result.data.evidenceId);
+      setMessage(`Uploaded and queued evidence ${result.data.evidenceId}. ${assignmentLabel()}`);
       setFile(null);
       setUploadProgress(null);
     } catch (error) {
@@ -211,6 +306,39 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
         {isAdminHint ? (
           <>
             <form className="intake-form exact-form" onSubmit={submitUrl}>
+              {pinMode ? (
+                <p className="system-message">
+                  Pin mode is active. Choose a project and case, then click an evidence record below to file it onto the board.
+                </p>
+              ) : null}
+              <label>
+                Project
+                <select
+                  value={activeProjectId}
+                  onChange={(event) => {
+                    setSelectedProjectId(event.target.value || null);
+                    setSelectedCaseId(null);
+                  }}
+                >
+                  <option value="">No project</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.title}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Case
+                <select
+                  value={activeCaseId}
+                  onChange={(event) => setSelectedCaseId(event.target.value || null)}
+                  disabled={!activeProjectId || projectCases.length === 0}
+                >
+                  <option value="">No case yet</option>
+                  {projectCases.map((item) => (
+                    <option key={item.id} value={item.id}>{item.title}</option>
+                  ))}
+                </select>
+              </label>
               <label>
                 Source URL
                 <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/evidence" type="url" />
@@ -309,7 +437,17 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
           {sortedEvidence.map((evidence) => {
             const manip = manipulationScore(evidence);
             return (
-              <article key={evidence.id} className="evidence-row exact-evidence-row" onClick={() => onSelect(evidence.id)}>
+              <article
+                key={evidence.id}
+                className="evidence-row exact-evidence-row"
+                onClick={() => {
+                  if (pinMode) {
+                    void pinExistingEvidence(evidence, true);
+                    return;
+                  }
+                  onSelect(evidence.id);
+                }}
+              >
                 <div className="locker-row-main">
                   <div className="locker-row-badges">
                     <span className={`archive-chip ${evidence.archive_status}`}>{evidence.archive_status.replace("_", " ")}</span>
@@ -328,6 +466,18 @@ export function EvidenceLocker({ evidences, isAdminHint, onSelect, onDeleted }: 
                   </div>
                 </div>
                 <div className="locker-row-actions">
+                  {isAdminHint ? (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void pinExistingEvidence(evidence, false);
+                      }}
+                      disabled={!activeCaseId || assigningId === evidence.id || evidence.linked_conspiracy_ids.includes(activeCaseId)}
+                      title={activeCaseId ? "Pin evidence to selected case" : "Choose a case before pinning"}
+                    >
+                      {assigningId === evidence.id ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+                    </button>
+                  ) : null}
                   <a href={evidence.source_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} title="Open source">
                     <ExternalLink size={14} />
                   </a>

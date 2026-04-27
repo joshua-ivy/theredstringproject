@@ -33,6 +33,7 @@ export interface SupportingSource {
 
 export interface Evidence {
   id: string;
+  project_id?: string;
   title: string;
   type: EvidenceType;
   platform: string;
